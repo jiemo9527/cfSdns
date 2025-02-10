@@ -1,6 +1,10 @@
 # 使用官方 Python 基础镜像
-FROM python:3.9-slim
+FROM python:3.11-slim
+# 设置时区为上海（东八区）
+ENV TZ=Asia/Shanghai
 
+# 确保时区生效
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 # 设置工作目录
 WORKDIR /app
 

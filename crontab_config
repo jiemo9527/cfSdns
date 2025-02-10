@@ -1,1 +1,1 @@
-*/5 * * * * python3 /app/cf2alidns.py
+*/5 * * * * /usr/local/bin/python3 /app/cf2alidns.py >> /app/cf2alidns.log 2>&1
