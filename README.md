@@ -37,20 +37,17 @@
 
 # docker部署
 ```
-docker run -d \
-  --name cfsdns \
-  -e ALIYUN_ACCESS_KEY_ID="ALIYUN_ACCESS_KEY_ID" \
-  -e ALIYUN_ACCESS_KEY_SECRET="ALIYUN_ACCESS_KEY_SECRET" \
-  -e ALIYUN_PACKAGE_NUM=100 \
-  -e domain_rr="x" \
-  -e domain_root="abc.com" \
-  wanxve0000/cfsdns:latest
+docker run -d --name cfsdns wanxve0000/cfsdns:latest
+docker exec -it cfsdns bash
+crontab -e#填写参数
 ```
 说明
 ```
-ALIYUN_PACKAGE_NUM=线路数(免费10，付费100默认值)
-domain_rr=子域名
-domain_root=主域/根域
+ALIYUN_ACCESS_KEY_ID="KEY_ID"
+ALIYUN_ACCESS_KEY_SECRET="KEY_SECRET"
+ALIYUN_PACKAGE_NUM="线路数(免费10，付费100默认值)"
+domain_rr="子域名"
+domain_root="主域/根域"
 ```
 
 ### 上效果图（刚刚跑满，还没到最佳）

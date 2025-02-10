@@ -1,1 +1,6 @@
+ALIYUN_ACCESS_KEY_ID=""
+ALIYUN_ACCESS_KEY_SECRET=""
+ALIYUN_PACKAGE_NUM=""
+domain_rr=""
+domain_root=""
 */5 * * * * /usr/local/bin/python3 /app/cf2alidns.py >> /app/cf2alidns.log 2>&1

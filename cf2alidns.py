@@ -19,18 +19,17 @@ logging.basicConfig(
 # client = AcsClient('Key', 'Secret', 'cn-hangzhou')
 
 # 从环境变量中获取 Access Key ID 和 Access Key Secret
-access_key_id = os.getenv('ALIYUN_ACCESS_KEY_ID').strip()
-access_key_secret = os.getenv('ALIYUN_ACCESS_KEY_SECRET').strip()
-print(f"Access Key ID: {access_key_id} (Length: {len(access_key_id)})")
-print(f"Access Key Secret: {access_key_secret} (Length: {len(access_key_secret)})")
-
+access_key_id = os.getenv('ALIYUN_ACCESS_KEY_ID')
+access_key_secret = os.getenv('ALIYUN_ACCESS_KEY_SECRET')
 PackageNum = int(os.getenv('ALIYUN_PACKAGE_NUM', 100))  # 默认值为 100
-rr=os.getenv('domain_rr')
-xdomain=os.getenv('domain_root')
+rr = os.getenv('domain_rr')
+xdomain = os.getenv('domain_root')
 
 # 初始化 AcsClient
 client = AcsClient(access_key_id, access_key_secret, 'cn-hangzhou')
-#查询并计算上限
+
+
+# 查询并计算上限
 def query_all_domain_records(domain_name):
     all_records = []
     page_number = 1
@@ -63,7 +62,8 @@ def query_all_domain_records(domain_name):
 
     return all_records
 
-#检测已存在
+
+# 检测已存在
 def record_exists(client, domain_name, rr, record_type, value, line):
     try:
         request = DescribeDomainRecordsRequest()
@@ -76,13 +76,15 @@ def record_exists(client, domain_name, rr, record_type, value, line):
         response_json = json.loads(response)
 
         for record in response_json.get('DomainRecords', {}).get('Record', []):
-            if record['RR'] == rr and record['Type'] == record_type and record['Value'] == value and record['Line'] == line:
+            if record['RR'] == rr and record['Type'] == record_type and record['Value'] == value and record[
+                'Line'] == line:
                 return True
     except Exception as e:
         logging.error(f"检测已存在出错: {e}")
     return False
 
-#删除旧记录
+
+# 删除旧记录
 def delete_oldest_record(domain_name, rr, line):
     try:
         records = query_all_domain_records(domain_name)
@@ -96,7 +98,8 @@ def delete_oldest_record(domain_name, rr, line):
     except Exception as e:
         logging.error(f"删除旧记录出错: {e}")
 
-#添加记录
+
+# 添加记录
 def add_record(domain_name, rr, record_type, value, line):
     try:
         if record_exists(client, domain_name, rr, record_type, value, line):
@@ -124,13 +127,16 @@ def add_record(domain_name, rr, record_type, value, line):
         logging.error(f"{rr}.{domain_name}|{record_type} -> {value}({line}: {e}")
 
 
-#添加cname/a
+# 添加cname/a
 def add_cname_record(domain_name, rr, cname_values, line):
     for cname_value in cname_values:
         add_record(domain_name, rr, 'CNAME', cname_value, line)
+
+
 def add_a_record(domain_name, rr, ip_addresses, line, remark=None):
     for ip_address in ip_addresses:
         add_record(domain_name, rr, 'A', ip_address, line)
+
 
 if __name__ == '__main__':
     logging.info('start!')
