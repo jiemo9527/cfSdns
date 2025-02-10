@@ -1,14 +1,32 @@
+import os
+
 from aliyunsdkcore.client import AcsClient
 from aliyunsdkalidns.request.v20150109.DescribeDomainRecordsRequest import DescribeDomainRecordsRequest
 from aliyunsdkalidns.request.v20150109.AddDomainRecordRequest import AddDomainRecordRequest
 from aliyunsdkalidns.request.v20150109.DeleteDomainRecordRequest import DeleteDomainRecordRequest
 import json
 import givemeCFIP
+import logging
 
-PackageNum=100 #套餐线路上限
-# Access Key ID和Access Key Secret
-client = AcsClient('', '', 'cn-hangzhou')
+# 配置日志
+logging.basicConfig(
+    filename='/app/cf2alidns.log',
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 
+# PackageNum=100 #套餐线路上限
+# client = AcsClient('Key', 'Secret', 'cn-hangzhou')
+
+# 从环境变量中获取 Access Key ID 和 Access Key Secret
+access_key_id = os.getenv('ALIYUN_ACCESS_KEY_ID')
+access_key_secret = os.getenv('ALIYUN_ACCESS_KEY_SECRET')
+PackageNum=os.getenv('ALIYUN_PACKAGE_NUM')
+rr=os.getenv('domain_rr')
+xdomain=os.getenv('domain_root')
+
+# 初始化 AcsClient
+client = AcsClient(access_key_id, access_key_secret, 'cn-hangzhou')
 #查询并计算上限
 def query_all_domain_records(domain_name):
     all_records = []
@@ -37,7 +55,7 @@ def query_all_domain_records(domain_name):
 
             page_number += 1
         except Exception as e:
-            print(f"查询出错: {e}")
+            logging.error(f"查询出错: {e}")
             break
 
     return all_records
@@ -58,7 +76,7 @@ def record_exists(client, domain_name, rr, record_type, value, line):
             if record['RR'] == rr and record['Type'] == record_type and record['Value'] == value and record['Line'] == line:
                 return True
     except Exception as e:
-        print(f"检测已存在出错: {e}")
+        logging.error(f"检测已存在出错: {e}")
     return False
 
 #删除旧记录
@@ -71,21 +89,21 @@ def delete_oldest_record(domain_name, rr, line):
             request = DeleteDomainRecordRequest()
             request.set_RecordId(oldest_record['RecordId'])
             client.do_action_with_exception(request)
-            print(f"删除记录: {oldest_record}")
+            logging.info(f"删除记录: {oldest_record}")
     except Exception as e:
-        print(f"删除旧记录出错: {e}")
+        logging.error(f"删除旧记录出错: {e}")
 
 #添加记录
 def add_record(domain_name, rr, record_type, value, line):
     try:
         if record_exists(client, domain_name, rr, record_type, value, line):
-            print(f"已存在的记录: {rr}.{domain_name} -> {value}({line})")
+            logging.info(f"已存在的记录: {rr}.{domain_name} -> {value}({line})")
             return
 
         records = query_all_domain_records(domain_name)
         count = sum(1 for record in records if record['RR'] == rr and record['Line'] == line)
 
-        if count >= 100:
+        if count >= PackageNum:
             delete_oldest_record(domain_name, rr, line)
 
         request = AddDomainRecordRequest()
@@ -98,9 +116,9 @@ def add_record(domain_name, rr, record_type, value, line):
 
         response = client.do_action_with_exception(request)
         response_json = json.loads(response)
-        print(f"添加记录成功：{rr}.{domain_name}|{record_type} -> {value}({line})")
+        logging.info(f"添加记录成功：{rr}.{domain_name}|{record_type} -> {value}({line})")
     except Exception as e:
-        print(f"{rr}.{domain_name}|{record_type} -> {value}({line}: {e}")
+        logging.error(f"{rr}.{domain_name}|{record_type} -> {value}({line}: {e}")
 
 
 #添加cname/a
@@ -112,8 +130,10 @@ def add_a_record(domain_name, rr, ip_addresses, line, remark=None):
         add_record(domain_name, rr, 'A', ip_address, line)
 
 if __name__ == '__main__':
-    xdomain = 'abc.com'
+    logging.info('start!')
+    # xdomain = 'abc.com'
+    # rr='x'
     # add_cname_record(xdomain, '@', givemeCFIP.domain_list, 'mobile')
-    add_a_record(xdomain, 'x', givemeCFIP.cm_ip, 'mobile')
-    add_a_record(xdomain, 'x', givemeCFIP.cu_ip, 'unicom')
-    add_a_record(xdomain, 'x', givemeCFIP.ct_ip, 'telecom')
+    add_a_record(xdomain, rr, givemeCFIP.cm_ip, 'mobile')
+    add_a_record(xdomain, rr, givemeCFIP.cu_ip, 'unicom')
+    add_a_record(xdomain, rr, givemeCFIP.ct_ip, 'telecom')

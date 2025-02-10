@@ -234,15 +234,15 @@ cm_ip, cu_ip, ct_ip = extract_ips_from_fourth_site("https://ip.164746.xyz/ipTop1
 
 
 # 输出
-print("移动IP列表:")
-for ip in cm_ip:
-    print(ip)
-print("\n联通IP列表:")
-for ip in cu_ip:
-    print(ip)
-print("\n电信IP列表:")
-for ip in ct_ip:
-    print(ip)
-print("\n域名列表:")#未处理
-for domain in domain_list:
-    print(domain)
+# print("移动IP列表:")
+# for ip in cm_ip:
+#     print(ip)
+# print("\n联通IP列表:")
+# for ip in cu_ip:
+#     print(ip)
+# print("\n电信IP列表:")
+# for ip in ct_ip:
+#     print(ip)
+# print("\n域名列表:")#未处理
+# for domain in domain_list:
+#     print(domain)
