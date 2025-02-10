@@ -19,8 +19,11 @@ logging.basicConfig(
 # client = AcsClient('Key', 'Secret', 'cn-hangzhou')
 
 # 从环境变量中获取 Access Key ID 和 Access Key Secret
-access_key_id = os.getenv('ALIYUN_ACCESS_KEY_ID')
-access_key_secret = os.getenv('ALIYUN_ACCESS_KEY_SECRET')
+access_key_id = os.getenv('ALIYUN_ACCESS_KEY_ID').strip()
+access_key_secret = os.getenv('ALIYUN_ACCESS_KEY_SECRET').strip()
+print(f"Access Key ID: {access_key_id} (Length: {len(access_key_id)})")
+print(f"Access Key Secret: {access_key_secret} (Length: {len(access_key_secret)})")
+
 PackageNum = int(os.getenv('ALIYUN_PACKAGE_NUM', 100))  # 默认值为 100
 rr=os.getenv('domain_rr')
 xdomain=os.getenv('domain_root')

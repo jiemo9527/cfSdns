@@ -36,7 +36,6 @@
 3.  每5分钟`python cf2alidns.py`（不得低于2分钟/次）
 
 # docker部署
-1.
 ```
 docker run -d \
   --name cfsdns \
@@ -47,9 +46,9 @@ docker run -d \
   -e domain_root="abc.com" \
   wanxve0000/cfsdns:latest
 ```
-2.说明
+说明
 ```
-ALIYUN_PACKAGE_NUM=线路数；免费10，付费100（默认值）
+ALIYUN_PACKAGE_NUM=线路数(免费10，付费100默认值)
 domain_rr=子域名
 domain_root=主域/根域
 ```
