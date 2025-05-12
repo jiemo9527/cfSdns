@@ -28,15 +28,11 @@ domain_list = [    # 泛播域名
 ]
 
 
-def extract_table_values(url, table_id, table_index):
+def extract_table_values(url):
     """
-    从指定的URL中提取具有特定ID的表格数据，仅返回值。
-
+    从指定的URL中提取表格数据，仅返回值。
     参数:
     - url: 网页的URL。
-    - table_id: 目标表格的ID。
-    - table_index: 目标表格在页面中的索引（从0开始），默认为1表示第二个表格。
-
     返回:
     - 包含每行数据值的列表列表。
     """
@@ -48,39 +44,29 @@ def extract_table_values(url, table_id, table_index):
     except Exception as e:
         print(f"请求失败: {e}")
         return []
-
     # 解析HTML内容
     soup = BeautifulSoup(html_content, 'html.parser')
-
-    # 找到所有具有特定ID的表格
-    tables = soup.find_all('table', id=table_id)
-
-    # 检查是否有足够的表格
-    if len(tables) > table_index:
-        # 选择指定索引的表格
-        table = tables[table_index]
-
-        # 找到表格主体
-        table_body = table.find('tbody')
-
-        # 用于存储结果的列表
-        results = []
-
-        # 提取每一行的数据
-        for row in table_body.find_all('tr'):
-            cols = row.find_all('td')
-            # 只提取需要的列值
-            values = [
-                cols[0].text.strip(),  # 线路名称
-                cols[1].text.strip(),  # 优选地址
-                cols[6].text.strip()  # 更新时间
-            ]
-            results.append(values)
-
-        return results
-    else:
-        print(f"未找到至少 {table_index + 1} 个具有ID '{table_id}' 的表格")
+    # 找到第一个表格
+    table = soup.find('table')
+    # 检查是否找到表格
+    if not table:
+        print("未找到表格")
         return []
+    # 找到表格主体
+    table_body = table.find('tbody')
+    # 用于存储结果的列表
+    results = []
+    # 提取每一行的数据
+    for row in table_body.find_all('tr'):
+        cols = row.find_all('td')
+        # 只提取需要的列值
+        values = [
+            cols[0].text.strip(),  # 线路名称
+            cols[1].text.strip(),  # 优选地址
+            cols[6].text.strip()  # 更新时间
+        ]
+        results.append(values)
+    return results
 
 
 def extract_ip_and_domain_from_json(url):
@@ -206,9 +192,8 @@ def extract_ips_from_fourth_site(url):
 
 
 
-
 # 1
-data = extract_table_values("https://www.wetest.vip/page/cloudflare/address_v4.html", "data-table", 1)
+data = extract_table_values("https://www.wetest.vip/page/cloudflare/address_v4.html")
 for values in data:
     if "移动" in values[0]:
         cm_ip.append(values[1])
@@ -216,14 +201,6 @@ for values in data:
         cu_ip.append(values[1])
     elif "电信" in values[0]:
         ct_ip.append(values[1])
-
-# 2
-ip_list, domain_list2 = extract_ip_and_domain_from_json("https://www.upx8.com/app/cfip/get_cf_data.php")
-# 将ip_list中的IP地址添加到cm_ip, cu_ip, ct_ip
-cm_ip.extend(ip_list)
-cu_ip.extend(ip_list)
-ct_ip.extend(ip_list)
-domain_list.extend(domain_list2)
 
 # 3
 cm_ip, cu_ip, ct_ip = extract_ips_from_third_site("https://cf.090227.xyz")
@@ -234,15 +211,15 @@ cm_ip, cu_ip, ct_ip = extract_ips_from_fourth_site("https://ip.164746.xyz/ipTop1
 
 
 # 输出
-# print("移动IP列表:")
-# for ip in cm_ip:
-#     print(ip)
-# print("\n联通IP列表:")
-# for ip in cu_ip:
-#     print(ip)
-# print("\n电信IP列表:")
-# for ip in ct_ip:
-#     print(ip)
+print("移动IP列表:")
+for ip in cm_ip:
+    print(ip)
+print("\n联通IP列表:")
+for ip in cu_ip:
+    print(ip)
+print("\n电信IP列表:")
+for ip in ct_ip:
+    print(ip)
 # print("\n域名列表:")#未处理
 # for domain in domain_list:
 #     print(domain)
