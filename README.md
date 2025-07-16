@@ -50,8 +50,9 @@ domain_rr="子域名"
 domain_root="主域/根域"
 ```
 
-### 上效果图（刚刚跑满，还没到最佳）
-![Snipaste_2025-02-08_19-50-34.jpg](Snipaste_2025-02-08_19-50-34.jpg)
+### 上效果图
+![Snipaste_01.png](Snipaste_01.png)
+![Snipaste_02.png](Snipaste_02.png)
 ### 感谢
 <https://github.com/ddgth/cf2dns>
 
