@@ -16,7 +16,6 @@ domain_list = [    # 泛播域名
     "www.visa.com.tw",
     "qa.visamiddleeast.com",
     "cloudflare-ip.mofashi.ltd",
-    "cf.877774.xyz",
     "fbi.gov",
     "www.wto.org",
     "www.fortnite.com",
@@ -190,6 +189,49 @@ def extract_ips_from_fourth_site(url):
     return cm_ip, cu_ip, ct_ip
 
 
+def extract_ips_from_fifth_site(url):
+    """
+    从指定的URL的JSON响应中提取IP地址，并根据【独立】的丢包率标准将其添加到相应的列表中。
+    """
+    try:
+        response = requests.get(url)
+        response.raise_for_status()  # 检查请求是否成功
+        data = response.json()  # 解析JSON响应
+    except Exception as e:
+        print(f"请求失败: {e}")
+        return cm_ip, cu_ip, ct_ip
+
+    # 用一个集合来收集所有IP信息，并自动处理来自不同类别（如CT, CU）的重复IP信息
+    all_ips_info = {}
+    if data.get("code") == 0:
+        # 遍历所有类别 (CT, CU, CM, AllAvg)
+        for provider_key, ips_list in data.get("data", {}).items():
+            for ip_info in ips_list:
+                ip = ip_info.get("ip")
+                if ip:
+                    # 如果遇到相同的ip，后面的数据会覆盖前面的，通常数据更新，问题不大
+                    all_ips_info[ip] = ip_info
+
+    # 遍历所有收集到的、不重复的IP信息
+    for ip, ip_info in all_ips_info.items():
+        yd_loss = ip_info.get("ydPkgLostRateAvg", float('inf'))
+        lt_loss = ip_info.get("ltPkgLostRateAvg", float('inf'))
+        dx_loss = ip_info.get("dxPkgLostRateAvg", float('inf'))
+
+        # === 核心修改：独立的判断条件 ===
+        # 只要满足移动的条件，就添加到移动列表
+        if yd_loss < 3.3:
+            cm_ip.append(ip)
+
+        # 只要满足联通的条件，就添加到联通列表
+        if lt_loss < 0.5:
+            cu_ip.append(ip)
+
+        # 只要满足电信的条件，就添加到电信列表
+        if dx_loss < 3.3:
+            ct_ip.append(ip)
+
+    return cm_ip, cu_ip, ct_ip
 
 
 # 1
@@ -208,18 +250,21 @@ cm_ip, cu_ip, ct_ip = extract_ips_from_third_site("https://cf.090227.xyz")
 # 4
 cm_ip, cu_ip, ct_ip = extract_ips_from_fourth_site("https://ip.164746.xyz/ipTop10.html")
 
+# 5
+cm_ip, cu_ip, ct_ip = extract_ips_from_fifth_site("https://vps789.com/openApi/cfIpApi")
+
 
 
 # 输出
-# print("移动IP列表:")
-# for ip in cm_ip:
-#     print(ip)
-# print("\n联通IP列表:")
-# for ip in cu_ip:
-#     print(ip)
-# print("\n电信IP列表:")
-# for ip in ct_ip:
-#     print(ip)
-# print("\n域名列表:")#未处理
+print("移动IP列表:")
+for ip in list(set(cm_ip)): # 使用set去重
+    print(ip)
+print("\n联通IP列表:")
+for ip in list(set(cu_ip)): # 使用set去重
+    print(ip)
+print("\n电信IP列表:")
+for ip in list(set(ct_ip)): # 使用set去重
+    print(ip)
+print("\n域名列表:")#未处理
 # for domain in domain_list:
 #     print(domain)
