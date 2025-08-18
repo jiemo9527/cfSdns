@@ -143,6 +143,6 @@ if __name__ == '__main__':
     # xdomain = 'abc.com'
     # rr='x'
     # add_cname_record(xdomain, '@', givemeCFIP.domain_list, 'mobile')
-    add_a_record(xdomain, rr, givemeCFIP.cm_ip, 'mobile')
-    add_a_record(xdomain, rr, givemeCFIP.cu_ip, 'unicom')
-    add_a_record(xdomain, rr, givemeCFIP.ct_ip, 'telecom')
+    add_a_record(xdomain, rr, givemeCFIP.final_cm_ip, 'mobile')
+    add_a_record(xdomain, rr, givemeCFIP.final_cu_ip, 'unicom')
+    add_a_record(xdomain, rr, givemeCFIP.final_ct_ip, 'telecom')
