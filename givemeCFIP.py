@@ -1,270 +1,154 @@
-import cloudscraper
 import requests
-from bs4 import BeautifulSoup
-import re
+import json  # 用于处理可能的JSON解析错误
+
+# --- 1. 对导入模块进行异常处理 ---
+# 尝试导入v3data，如果失败，则定义一个返回空列表的备用函数
+# 这样无论模块是否存在，程序主体都可以正常运行而不会崩溃
+try:
+    from getv3data import v3data
+
+    print("模块 'getv3data' 导入成功。")
+except (ImportError, ModuleNotFoundError):
+    print("【警告】: 'getv3data' 模块未找到或导入失败。将跳过此数据源。")
 
 
-# 初始化列表
-cm_ip = []  # 移动IP
-cu_ip = []  # 联通IP
-ct_ip = []  # 电信IP
-domain_list = [    # 泛播域名
-    "store.epicgames.com",
-    "cdnjs.com",
-    "www.racknerd.com",
-    "www.epicgames.com",
-    "www.visa.com.tw",
-    "qa.visamiddleeast.com",
-    "cloudflare-ip.mofashi.ltd",
-    "fbi.gov",
-    "www.wto.org",
-    "www.fortnite.com",
-    "ns3.cloudflare.com",
-    "ns6.cloudflare.com",
-    "ns4.cloudflare.com",
-    "ns5.cloudflare.com",
+    # 定义一个空的备用(dummy)函数
+    def v3data():
+        """这是一个备用函数，在主模块导入失败时使用，确保程序不崩溃。"""
+        return [], [], []
+
+# 全局变量和常量
+API_URL = "https://vps789.com/openApi/cfIpApi"
+domain_list = [
+    "store.epicgames.com", "cdnjs.com", "www.racknerd.com", "www.epicgames.com",
+    "www.visa.com.tw", "qa.visamiddleeast.com", "cloudflare-ip.mofashi.ltd",
+    "fbi.gov", "www.wto.org", "www.fortnite.com", "ns3.cloudflare.com",
+    "ns6.cloudflare.com", "ns4.cloudflare.com", "ns5.cloudflare.com",
     "radar.cloudflare.com",
 ]
 
 
-def extract_table_values(url):
+def extract_ips_from_api(url):
     """
-    从指定的URL中提取表格数据，仅返回值。
-    参数:
-    - url: 网页的URL。
-    返回:
-    - 包含每行数据值的列表列表。
+    从指定的URL获取IP。此函数内部包含了网络请求、JSON解析和数据处理的异常捕获。
     """
+    local_cm, local_cu, local_ct = [], [], []
+
     try:
-        scraper = cloudscraper.create_scraper()
-        response = scraper.get(url)
-        response.raise_for_status()  # 检查请求是否成功
-        html_content = response.text
-    except Exception as e:
-        print(f"请求失败: {e}")
-        return []
-    # 解析HTML内容
-    soup = BeautifulSoup(html_content, 'html.parser')
-    # 找到第一个表格
-    table = soup.find('table')
-    # 检查是否找到表格
-    if not table:
-        print("未找到表格")
-        return []
-    # 找到表格主体
-    table_body = table.find('tbody')
-    # 用于存储结果的列表
-    results = []
-    # 提取每一行的数据
-    for row in table_body.find_all('tr'):
-        cols = row.find_all('td')
-        # 只提取需要的列值
-        values = [
-            cols[0].text.strip(),  # 线路名称
-            cols[1].text.strip(),  # 优选地址
-            cols[6].text.strip()  # 更新时间
-        ]
-        results.append(values)
-    return results
+        # --- 3. 对网络请求进行异常处理 ---
+        response = requests.get(url, timeout=10)  # 设置10秒超时
+        response.raise_for_status()  # 如果状态码不是2xx，则抛出HTTPError异常
 
+        # --- 4. 对JSON解析进行异常处理 ---
+        data = response.json()
 
-def extract_ip_and_domain_from_json(url):
-    """
-    从指定的URL中提取IP地址和域名，并将它们分类为两个列表。
-
-    参数:
-    - url: API的URL。
-
-    返回:
-    - 包含IP地址的列表和包含域名的列表。
-    """
-    try:
-        response = requests.get(url)
-        response.raise_for_status()  # 检查请求是否成功
-        data = response.json()  # 解析JSON响应
-    except Exception as e:
-        print(f"请求失败: {e}")
-        return [], []
-
-    # 用于存储IP地址和域名的列表
-    ip_list = []
-    domain_list = []
-
-    # 检查响应状态
-    if data.get("status") == "success":
-        for item in data.get("data", []):
-            ip_or_domain = item.get("ip", "")
-
-            # 使用正则表达式判断是否为IP地址
-            if re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', ip_or_domain):
-                ip_list.append(ip_or_domain)
-            else:
-                domain_list.append(ip_or_domain)
-
-    return ip_list, domain_list
-
-
-def extract_ips_from_third_site(url):
-    """
-    从指定的URL中提取第一个表格的前10个IP地址，并根据名称将其添加到相应的列表中。
-
-    参数:
-    - url: 网页的URL。
-
-    返回:
-    - 更新后的移动、联通和电信IP列表。
-    """
-    try:
-        scraper = cloudscraper.create_scraper()
-        response = scraper.get(url)
-        response.raise_for_status()  # 检查请求是否成功
-        html_content = response.text
-    except Exception as e:
-        print(f"请求失败: {e}")
+    except requests.exceptions.Timeout:
+        print(f"【错误】: 请求API '{url}' 超时。")
+        return [], [], []
+    except requests.exceptions.HTTPError as e:
+        print(f"【错误】: 请求API '{url}' 失败，HTTP状态码: {e.response.status_code}")
+        return [], [], []
+    except requests.exceptions.RequestException as e:
+        print(f"【错误】: 请求API '{url}' 时发生网络错误: {e}")
+        return [], [], []
+    except json.JSONDecodeError:
+        print(f"【错误】: 解析来自 '{url}' 的响应失败，内容不是有效的JSON格式。")
         return [], [], []
 
-    # 解析HTML内容
-    soup = BeautifulSoup(html_content, 'html.parser')
-
-    # 找到第一个表格
-    table = soup.find('table')
-
-    # 检查是否找到表格
-    if table:
-        # 初始化计数器
-        cm_count = 0
-        cu_count = 0
-        ct_count = 0
-
-        # 提取每一行的第一列和第二列数据
-        for row in table.find_all('tr'):
-            cols = row.find_all('td')
-            if len(cols) > 1:  # 确保有两列
-                name = cols[0].text.strip()
-                ip = cols[1].text.strip()
-
-                # 根据名称将IP添加到相应的列表中
-                if "移动" in name and cm_count < 10:
-                    cm_ip.append(ip)
-                    cm_count += 1
-                elif "联通" in name and cu_count < 10:
-                    cu_ip.append(ip)
-                    cu_count += 1
-                elif "电信" in name and ct_count < 10:
-                    ct_ip.append(ip)
-                    ct_count += 1
-    else:
-        print("未找到表格")
-
-    return cm_ip, cu_ip, ct_ip
-
-
-def extract_ips_from_fourth_site(url):
-    """
-    从指定的URL中提取IP地址，并将其添加到移动、联通和电信IP列表中。
-
-    参数:
-    - url: 网页的URL。
-
-    返回:
-    - 更新后的移动、联通和电信IP列表。
-    """
-    try:
-        scraper = cloudscraper.create_scraper()
-        response = scraper.get(url)
-        response.raise_for_status()  # 检查请求是否成功
-        ip_text = response.text.strip()  # 获取文本内容
-    except Exception as e:
-        print(f"请求失败: {e}")
+    # --- 5. 对数据结构进行健壮性处理 ---
+    # 确保data['data']是一个字典，如果不是或不存在，.get()会返回一个空字典，避免程序出错
+    ip_data = data.get("data")
+    if not isinstance(ip_data, dict):
+        print(f"【警告】: API响应中 'data' 字段的格式不正确（不是字典），无法提取IP。")
         return [], [], []
 
-    # 将文本内容分割成IP地址列表
-    ip_list = ip_text.split(',')
-
-    # 将IP地址添加到所有列表
-    cm_ip.extend(ip_list)
-    cu_ip.extend(ip_list)
-    ct_ip.extend(ip_list)
-
-    return cm_ip, cu_ip, ct_ip
-
-
-def extract_ips_from_fifth_site(url):
-    """
-    从指定的URL的JSON响应中提取IP地址，并根据【独立】的丢包率标准将其添加到相应的列表中。
-    """
-    try:
-        response = requests.get(url)
-        response.raise_for_status()  # 检查请求是否成功
-        data = response.json()  # 解析JSON响应
-    except Exception as e:
-        print(f"请求失败: {e}")
-        return cm_ip, cu_ip, ct_ip
-
-    # 用一个集合来收集所有IP信息，并自动处理来自不同类别（如CT, CU）的重复IP信息
     all_ips_info = {}
-    if data.get("code") == 0:
-        # 遍历所有类别 (CT, CU, CM, AllAvg)
-        for provider_key, ips_list in data.get("data", {}).items():
-            for ip_info in ips_list:
-                ip = ip_info.get("ip")
-                if ip:
-                    # 如果遇到相同的ip，后面的数据会覆盖前面的，通常数据更新，问题不大
-                    all_ips_info[ip] = ip_info
+    for provider_key, ips_list in ip_data.items():
+        # 确保每个运营商对应的ips_list是列表类型
+        if not isinstance(ips_list, list):
+            continue  # 如果不是列表，就跳过这个运营商
 
-    # 遍历所有收集到的、不重复的IP信息
+        for ip_info in ips_list:
+            # 确保ip_info是字典，并且包含'ip'键
+            if isinstance(ip_info, dict) and 'ip' in ip_info:
+                all_ips_info[ip_info['ip']] = ip_info
+
     for ip, ip_info in all_ips_info.items():
         yd_loss = ip_info.get("ydPkgLostRateAvg", float('inf'))
         lt_loss = ip_info.get("ltPkgLostRateAvg", float('inf'))
         dx_loss = ip_info.get("dxPkgLostRateAvg", float('inf'))
 
-        # === 核心修改：独立的判断条件 ===
-        # 只要满足移动的条件，就添加到移动列表
         if yd_loss < 3.3:
-            cm_ip.append(ip)
-
-        # 只要满足联通的条件，就添加到联通列表
+            local_cm.append(ip)
         if lt_loss < 0.5:
-            cu_ip.append(ip)
-
-        # 只要满足电信的条件，就添加到电信列表
+            local_cu.append(ip)
         if dx_loss < 3.3:
-            ct_ip.append(ip)
+            local_ct.append(ip)
 
-    return cm_ip, cu_ip, ct_ip
-
-
-# 1
-data = extract_table_values("https://www.wetest.vip/page/cloudflare/address_v4.html")
-for values in data:
-    if "移动" in values[0]:
-        cm_ip.append(values[1])
-    elif "联通" in values[0]:
-        cu_ip.append(values[1])
-    elif "电信" in values[0]:
-        ct_ip.append(values[1])
-
-# 3
-cm_ip, cu_ip, ct_ip = extract_ips_from_third_site("https://cf.090227.xyz")
-
-# 4
-cm_ip, cu_ip, ct_ip = extract_ips_from_fourth_site("https://ip.164746.xyz/ipTop10.html")
-
-# 5
-cm_ip, cu_ip, ct_ip = extract_ips_from_fifth_site("https://vps789.com/openApi/cfIpApi")
+    return local_cm, local_cu, local_ct
 
 
+# === 主要逻辑：现在每一步都有保护 ===
 
-# 输出
-print("移动IP列表:")
-for ip in list(set(cm_ip)): # 使用set去重
+# 1. 从API获取IP (函数内部已处理异常)
+print("--- 开始执行任务 ---")
+print("步骤 1: 正在从 API 获取IP...")
+cm_ip_api, cu_ip_api, ct_ip_api = extract_ips_from_api(API_URL)
+print(f"API 获取完成。移动 {len(cm_ip_api)}, 联通 {len(cu_ip_api)}, 电信 {len(ct_ip_api)} 个IP")
+
+# 2. 从v3data获取IP
+print("\n步骤 2: 正在从 v3data 获取IP...")
+try:
+    # --- 2. 对v3data()函数执行进行异常处理 ---
+    cm_ip_v3, cu_ip_v3, ct_ip_v3 = v3data()
+    print(f"v3data 获取完成。移动 {len(cm_ip_v3)}, 联通 {len(cu_ip_v3)}, 电信 {len(ct_ip_v3)} 个IP")
+except Exception as e:
+    print(f"【错误】: 执行 v3data() 函数时发生意外: {e}。将跳过此数据源。")
+    # 出错时，确保列表为空，以便后续合并操作能正常进行
+    cm_ip_v3, cu_ip_v3, ct_ip_v3 = [], [], []
+
+# 3. 合并结果 (这一步是安全的，因为所有列表都已确保存在)
+print("\n步骤 3: 正在合并所有数据源...")
+cm_ip_final = cm_ip_api + cm_ip_v3
+cu_ip_final = cu_ip_api + cu_ip_v3
+ct_ip_final = ct_ip_api + ct_ip_v3
+print("合并完成。")
+
+# === 输出最终结果 (这部分逻辑本身很安全) ===
+print("\n--- 合并后的最终IP列表 ---")
+
+# ... (输出部分的代码与之前相同，因为即使列表为空，它也能正常工作)
+# --- 处理移动IP ---
+print("\n移动IP列表:")
+unique_cm_ips = sorted(list(set(cm_ip_final)))
+print(f"合并去重后共: {len(unique_cm_ips)} 个")
+if len(unique_cm_ips) > 50:
+    print("列表超过50个，仅保留最后50个。")
+    unique_cm_ips = unique_cm_ips[-50:]
+for ip in unique_cm_ips:
     print(ip)
+print(f"最终输出: {len(unique_cm_ips)} 个")
+
+# --- 处理联通IP ---
 print("\n联通IP列表:")
-for ip in list(set(cu_ip)): # 使用set去重
+unique_cu_ips = sorted(list(set(cu_ip_final)))
+print(f"合并去重后共: {len(unique_cu_ips)} 个")
+if len(unique_cu_ips) > 50:
+    print("列表超过50个，仅保留最后50个。")
+    unique_cu_ips = unique_cu_ips[-50:]
+for ip in unique_cu_ips:
     print(ip)
+print(f"最终输出: {len(unique_cu_ips)} 个")
+
+# --- 处理电信IP ---
 print("\n电信IP列表:")
-for ip in list(set(ct_ip)): # 使用set去重
+unique_ct_ips = sorted(list(set(ct_ip_final)))
+print(f"合并去重后共: {len(unique_ct_ips)} 个")
+if len(unique_ct_ips) > 50:
+    print("列表超过50个，仅保留最后50个。")
+    unique_ct_ips = unique_ct_ips[-50:]
+for ip in unique_ct_ips:
     print(ip)
-print("\n域名列表:")#未处理
-# for domain in domain_list:
-#     print(domain)
+print(f"最终输出: {len(unique_ct_ips)} 个")
+
+print("\n--- 任务执行完毕 ---")
