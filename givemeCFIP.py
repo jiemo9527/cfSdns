@@ -131,13 +131,40 @@ def get_cf_ips():
         final_ct_ip = unique_ct_ips
         print(f"电信IP列表去重后共 {len(final_ct_ip)} 个。")
 
+    # --- 新增步骤 5: 剔除指定网段的IP ---
+    print("\n--- 步骤 5: 剔除 172.65.*.* 网段的IP ---")
+
+    # 原始数量
+    before_cm_count = len(final_cm_ip)
+    before_cu_count = len(final_cu_ip)
+    before_ct_count = len(final_ct_ip)
+
+    # 使用列表推导式进行过滤
+    final_cm_ip_filtered = [ip for ip in final_cm_ip if not ip.startswith("172.65.")]
+    final_cu_ip_filtered = [ip for ip in final_cu_ip if not ip.startswith("172.65.")]
+    final_ct_ip_filtered = [ip for ip in final_ct_ip if not ip.startswith("172.65.")]
+
+    # 打印剔除报告
+    print(
+        f"移动IP: 从 {before_cm_count} 个中剔除 {before_cm_count - len(final_cm_ip_filtered)} 个, 剩余 {len(final_cm_ip_filtered)} 个。")
+    print(
+        f"联通IP: 从 {before_cu_count} 个中剔除 {before_cu_count - len(final_cu_ip_filtered)} 个, 剩余 {len(final_cu_ip_filtered)} 个。")
+    print(
+        f"电信IP: 从 {before_ct_count} 个中剔除 {before_ct_count - len(final_ct_ip_filtered)} 个, 剩余 {len(final_ct_ip_filtered)} 个。")
+
     print("\n--- IP获取任务执行完毕 ---")
 
-    # 按照您的要求返回 (电信, 移动, 联通)
-    return final_ct_ip, final_cm_ip, final_cu_ip
+    # 按照您的要求返回过滤后的列表 (电信, 移动, 联通)
+    return final_ct_ip_filtered, final_cm_ip_filtered, final_cu_ip_filtered
 
 
 # --- 4. 主程序入口与示例调用 ---
-if __name__ == '__main__':
-    # 调用主函数获取IP列表
-    ct_ip, cm_ip, cu_ip = get_cf_ips()
+# if __name__ == '__main__':
+#     # 调用主函数获取IP列表
+#     ct_ip, cm_ip, cu_ip = get_cf_ips()
+#
+#     # 打印最终结果以供验证
+#     print("\n--- 最终获取到的IP列表 (已剔除 172.65.*.*) ---")
+#     print(f"电信IP ({len(ct_ip)}个): {ct_ip}")
+#     print(f"移动IP ({len(cm_ip)}个): {cm_ip}")
+#     print(f"联通IP ({len(cu_ip)}个): {cu_ip}")
