@@ -102,7 +102,7 @@ def v3data():
                         cm_ip.append(ip)
 
                     # 只要满足联通的条件，就添加到联通列表
-                    if lt_loss < 0.5:
+                    if lt_loss < 0.25:
                         cu_ip.append(ip)
 
                     # 只要满足电信的条件，就添加到电信列表
