@@ -98,15 +98,15 @@ def v3data():
                     dx_loss = ip_info.get("dxPkgLostRateAvg", float('inf'))
 
                     # 只要满足移动的条件，就添加到移动列表
-                    if yd_loss < 3.2:
+                    if yd_loss < 3.5:
                         cm_ip.append(ip)
 
                     # 只要满足联通的条件，就添加到联通列表
-                    if lt_loss < 0.3:
+                    if lt_loss < 0.5:
                         cu_ip.append(ip)
 
                     # 只要满足电信的条件，就添加到电信列表
-                    if dx_loss < 3.2:
+                    if dx_loss < 3.5:
                         ct_ip.append(ip)
 
                 # print("\n---------- 筛选完成！结果如下 ----------")
