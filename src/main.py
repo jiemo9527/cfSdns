@@ -16,7 +16,12 @@ def main():
     ct_ip, cm_ip, cu_ip = getIPFromW3.get_cf_ips()
     logging.info("IP获取完成。")
 
-    # 步骤2：使用新获取的IP更新阿里云DNS记录。
+
+    ###步骤2：执行筛选&&剔除低质量dns记录
+    ###...
+
+
+    # 步骤2.5：使用新获取的IP更新阿里云DNS记录。
     # cf2alidns模块中的update_aliyun_dns_records函数负责处理此操作。
     logging.info("正在执行阿里云DNS更新...")
     cf2alidns.update_aliyun_dns_records(cm_ip=cm_ip, cu_ip=cu_ip, ct_ip=ct_ip)

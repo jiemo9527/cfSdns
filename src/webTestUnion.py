@@ -114,17 +114,150 @@ async def run_itdog_test(target_host: str, custom_dns: str):
 
     return final_results
 
+async def run_cesu_ai_test(target_urls: list):
+    """
+    使用Playwright全自动执行 CESU.AI 批量网站测速，并返回最终清洗、结构化后的JSON结果。
+
+    :param target_urls: 需要测试的URL列表 (例如: ["https://www.cesu.ai"])
+    :return: 包含测试结果的JSON字符串，如果失败则返回None。
+    """
+    test_finished_event = asyncio.Event()
+    final_results = None
+
+    async with async_playwright() as p:
+        try:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page()
+
+            print("--- [CESU.AI] 任务开始 ---")
+            print("步骤 1: 浏览器启动，正在导航到页面...")
+            await page.goto("https://www.cesu.ai/http_batch", timeout=60000, wait_until="networkidle")
+            print("页面加载完成。")
+
+            def handle_ws_message(ws):
+                def process_payload(payload_str):
+                    if isinstance(payload_str, str):
+                        try:
+                            data = json.loads(payload_str)
+                            if isinstance(data, dict) and data.get("message") == "finish":
+                                print("\n[CESU.AI] 检测到WebSocket结束信号，测试完成！")
+                                test_finished_event.set()
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+
+                ws.on("framereceived", process_payload)
+
+            page.on("websocket", handle_ws_message)
+            print("WebSocket 监听器已设置。")
+
+            print("步骤 2: 正在定位并填写测试URL...")
+            urls_to_test = "\n".join(target_urls)
+            await page.locator('textarea[name="host"]').fill(urls_to_test)
+            print(f"成功填写 {len(target_urls)} 个URL。")
+
+            print("步骤 3: 点击“批量检测”按钮并等待页面跳转...")
+            async with page.expect_navigation(wait_until="networkidle", timeout=60000):
+                await page.locator('span.action_submit[data-type="batch"]').click()
+            print("页面跳转成功，测试已启动，正在等待完成信号...")
+
+            await asyncio.wait_for(test_finished_event.wait(), timeout=300)
+
+            # 【核心修正】增加一个5秒的固定等待，确保前端有足够时间渲染最终结果
+            print("\n步骤 4: 等待5秒，确保前端完全渲染表格...")
+            await page.wait_for_timeout(5000)
+
+            print("\n步骤 5: 正在提取、拆分并结构化结果表格为JSON...")
+
+            results = await page.evaluate('''() => {
+                const table = document.querySelector("table.table.table_cont");
+                if (!table) return null;
+
+                const headers = Array.from(table.querySelectorAll("thead th")).map(th => th.innerText.trim());
+                const rows = Array.from(table.querySelectorAll("tbody tr"));
+
+                return rows.map(row => {
+                    const cells = Array.from(row.querySelectorAll("td"));
+                    const rowData = {};
+                    headers.forEach((header, index) => {
+                        const cell = cells[index];
+                        if (!cell) {
+                            rowData[header] = '';
+                            return;
+                        }
+
+                        const cellText = cell.innerText.trim();
+
+                        if (!['序号', '检测目标', '异常节点(占比)', '操作'].includes(header)) {
+                            const parts = cellText.split('\\n');
+                            const timeAndStatus = parts[0].trim();
+
+                            let status = '';
+                            let time = '';
+                            let ip = '';
+                            let ip_location = '';
+
+                            if (isNaN(parseInt(timeAndStatus, 10))) {
+                                status = timeAndStatus;
+                                time = '--';
+                            } else {
+                                status = timeAndStatus.substring(0, 3);
+                                time = timeAndStatus.substring(3);
+                            }
+
+                            if (parts.length > 1) {
+                                const ipInfo = parts.slice(1).join(' ').trim();
+                                const match = ipInfo.match(/^[\\d\\.:a-fA-F]+\\s*\\[.*\\]$/) 
+                                    ? ipInfo.match(/^([\\d\\.:a-fA-F]+)\\s*\\[(.*)\\]$/) 
+                                    : [null, ipInfo, ''];
+
+                                if (match) {
+                                    ip = match[1] || ipInfo;
+                                    ip_location = match[2] || '';
+                                }
+                            }
+
+                            rowData[header] = {
+                                "状态": status,
+                                "耗时": time,
+                                "IP": ip,
+                                "IP归属地": ip_location
+                            };
+
+                        } else {
+                            rowData[header] = cellText;
+                        }
+                    });
+                    return rowData;
+                });
+            }''')
+
+            if results:
+                final_results = json.dumps(results, indent=2, ensure_ascii=False)
+            else:
+                print("错误：未能找到结果表格 table.table.table_cont。");
+
+        except Exception as e:
+            await page.screenshot(path="cesu_ai_error.png")
+            print(f"\n[CESU.AI] 操作页面时发生错误: {e}")
+            print("已保存截图到 cesu_ai_error.png 文件，请查看。")
+        finally:
+            if 'browser' in locals() and browser.is_connected():
+                await browser.close()
+                print("\n[CESU.AI] 浏览器已关闭。")
+
+    return final_results
 
 # ---测试 ---
 if __name__ == "__main__":
-    # 定义要测试的目标和使用的DNS
-    test_target = "1.1.1.1"
-    dns_server = "119.29.29.29"
-
-    # 运行测试函数
-    json_output = asyncio.run(run_itdog_test(target_host=test_target, custom_dns=dns_server))
-    # 打印最终结果
+    ## 测试run_itdog_test
+    # json_output = asyncio.run(run_itdog_test(target_host="1.1.1.1", custom_dns="119.29.29.29"))
+    # if json_output:
+    #     print(json_output)
+    # else:
+    #     print("\n脚本执行完毕，但未能获取到JSON结果。")
+    ## 测试run_cesu_ai_test
+    json_output = asyncio.run(run_cesu_ai_test(target_urls=["http://y.jie02.top"]))
     if json_output:
         print(json_output)
     else:
-        print("\n脚本执行完毕，但未能获取到JSON结果。")
+        print("\n[CESU.AI] 任务执行完毕，但未能获取到JSON结果。")
