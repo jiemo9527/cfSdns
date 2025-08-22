@@ -267,18 +267,9 @@ if __name__ == "__main__":
     ## 测试run_cesu_test
 
     cesuck = [
-        {
-            "name": "cw_conversation",
-            "value": "eyJhbGciOiJIUzI1NiJ9.eyJzb3VyY2VfaWQiOiJmOGM3NTFkMS0yYTEyLTRjMjItYWJkNC05OGZlMjg0YmY5ZTYiLCJpbmJveF9pZCI6Mn0.FOIgAPNX2A3Vd71Uje-iQOdheYhViGfurAoF5H6zY0E",
-            "url": "https://www.cesu.ai"
-        },
-        {
-            "name": "cesu_session",
-            "value": "eyJpdiI6ImJXUWpzSHJTL2xQaTRIVGdyS2grZHc9PSIsInZhbHVlIjoiZlhzbXZpLytjZVFsQVY1dlpIREhSRktiYUZMcnprcGJIbndCY3p2M1ZQWHlyRDJrWHExV3ZhUndiT2hmSEU2RldsNXFYdmh1bUVmWWxVd01HSFBlQWVYa2RkY2lTLzRsRGp6a1hkdUF6TE9DQ0c3RzduU282eGhQU1pHejZSMVAiLCJtYWMiOiJiYzU2NTQwZjI5NDU3MmUyOGYzMjdjOGIzZjBlMzhmMDZhYjY5YWI3OGMzNjkwMTI0YzNjMjVmNjBhZThmM2JlIiwidGFnIjoiIn0%3D",
-            "url": "https://www.cesu.ai"
-        }
+
     ]
-    json_output = asyncio.run(run_cesu_test(target_urls=["y.jie02.top", 'go.jie02.top'], cookies=cesuck))
+    json_output = asyncio.run(run_cesu_test(target_urls=["1.1.1.1"], cookies=cesuck))
     if json_output:
         print(json_output)
     else:
