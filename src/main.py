@@ -92,19 +92,15 @@ def main():
     logging.info("正在执行IP获取...")
     ct_ip, cm_ip, cu_ip = getIPFromW3.get_cf_ips()
     logging.info("IP获取完成。")
-
-
-    ###步骤2：清洗
-
+    #
+    #
+    # ###步骤2：清洗????按线路洗？
+    cesuck=[]
     json_dx = asyncio.run(webTestUnion.run_cesu_test(target_urls=ct_ip, cookies=cesuck))
     print(json_dx)
     if json_dx:
-        # 2. 调用筛选函数处理原始结果
-        #    这一步会返回一个只包含合格项目的列表，每个项目都是一个字典
         filtered_list = filter_cesu_results(json_dx)
-        # 3. 从筛选后的列表中提取IP地址
         if filtered_list:
-            # 使用列表推导式，从每个合格的字典中提取 "检测目标" 的值
             qualified_ips = [item['检测目标'] for item in filtered_list]
             print(f"共找到 {len(qualified_ips)} 个合格的IP。")
             print(qualified_ips)
@@ -117,6 +113,8 @@ def main():
 
     # 步骤3：更新&再次剔除
     logging.info("正在执行阿里云DNS更新...")
+    records = cf2alidns.query_all_domain_records(domain_name='jie02.top',subdomain='y')
+    print(records)#分批？
     cf2alidns.update_aliyun_dns_records(cm_ip=cm_ip, cu_ip=cu_ip, ct_ip=ct_ip)
     logging.info("阿里云DNS更新完成。")
 

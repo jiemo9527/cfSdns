@@ -21,6 +21,7 @@ PackageNum = int(os.getenv('ALIYUN_PACKAGE_NUM', 100))  # 套餐允许的记录�
 rr = os.getenv('domain_rr')  # 主机记录，例如 'www'
 xdomain = os.getenv('domain_root')  # 主域名，例如 'example.com'
 
+
 # 如果提供了凭据，则初始化AcsClient
 client = None
 if access_key_id and access_key_secret:
@@ -31,15 +32,24 @@ else:
 
 # --- DNS辅助函数 ---
 
-def query_all_domain_records(domain_name):
-    """查询并返回指定域名的所有记录。"""
+def query_all_domain_records(domain_name, subdomain=None):
+    """
+    查询并返回指定域名的记录。
+    如果提供了subdomain，则只返回该精确子域名的记录。
+
+    :param domain_name: 主域名, 例如 "example.com"
+    :param subdomain: 子域名(主机记录RR), 例如 "www"。如果为None, 则查询所有记录。
+                      注意：对于 'www.example.com'，此参数应传入 'www'。
+                      对于根域名记录(例如 example.com 的A记录), 此参数应传入 '@'。
+    :return: 包含DNS记录信息的字典列表
+    """
     if not client:
         logging.error("AcsClient未初始化，无法查询记录。")
         return []
 
     all_records = []
     page_number = 1
-    page_size = 500
+    page_size = 500  # API允许的最大页面大小
 
     while True:
         try:
@@ -49,19 +59,33 @@ def query_all_domain_records(domain_name):
             request.set_PageNumber(page_number)
             request.set_PageSize(page_size)
 
-            response = client.do_action_with_exception(request)
-            response_json = json.loads(response)
+            # 如果指定了子域名，则设置RRKeyWord参数进行筛选
+            if subdomain is not None:
+                request.set_RRKeyWord(subdomain)
 
-            records = response_json['DomainRecords']['Record']
-            all_records.extend(records)
+            response_str = client.do_action_with_exception(request)
+            response_json = json.loads(response_str)
 
-            total_count = response_json['TotalCount']
-            if len(all_records) >= total_count:
+            records_on_page = response_json['DomainRecords']['Record']
+
+            # 如果是查询特定子域名，需要进行精确匹配过滤
+            # 因为RRKeyWord是模糊搜索，例如搜索'test'会匹配到'test'和'test-api'
+            if subdomain is not None:
+                exact_match_records = [rec for rec in records_on_page if rec['RR'] == subdomain]
+                all_records.extend(exact_match_records)
+            else:
+                # 如果不指定子域名，则添加所有记录
+                all_records.extend(records_on_page)
+
+            # 判断是否已获取所有记录
+            # 如果当页返回的记录数小于请求的页面大小，说明已经是最后一页
+            if len(records_on_page) < page_size:
                 break
 
             page_number += 1
+
         except Exception as e:
-            logging.error(f"查询域名记录时发生错误: {e}")
+            logging.error(f"查询域名记录时发生错误 (域名: {domain_name}, 子域名: {subdomain}): {e}")
             break
 
     return all_records
@@ -120,7 +144,7 @@ def add_record(domain_name, rr, record_type, value, line):
             logging.info(f"记录已存在，跳过添加: {rr}.{domain_name} -> {value} ({line})")
             return
 
-        records = query_all_domain_records(domain_name)
+        records = query_all_domain_records(domain_name=domain_name)
         count = sum(1 for record in records if record['RR'] == rr and record['Line'] == line)
 
         if count >= PackageNum:
