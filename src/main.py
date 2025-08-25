@@ -127,7 +127,7 @@ def main():
 
     # 步骤3：更新&再次剔除
     logging.info("正在执行阿里云DNS更新...")
-    # records = cf2alidns.query_all_domain_records(domain_name='jie02.top',subdomain='y')
+    # records = cf2alidns.query_all_domain_records(domain_name=domain_root,subdomain=domain_rr)
     # print(records)#分批？
 
     # cf2alidns.update_aliyun_dns_records(cm_ip=cm_ip, cu_ip=cu_ip, ct_ip=ct_ip)
