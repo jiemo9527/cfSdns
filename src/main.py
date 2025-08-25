@@ -1,10 +1,15 @@
 # -*- coding: utf-8 -*-
 import asyncio
+import os
+
 import getIPFromW3
 import webTestUnion
 import cf2alidns
 import logging
 import json
+domain_rr = os.getenv('domain_rr')  # 主机记录，例如 'www'
+domain_root = os.getenv('domain_root')  # 主域名，例如 'example.com'
+temp_subdomain='temp'
 
 
 def filter_cesu_results(json_output: str) -> list:
@@ -92,30 +97,40 @@ def main():
     logging.info("正在执行IP获取...")
     ct_ip, cm_ip, cu_ip = getIPFromW3.get_cf_ips()
     logging.info("IP获取完成。")
+
+    cf2alidns.update_aliyun_dns_records(domain_rr=temp_subdomain,domain_root=domain_root,cm_ip=cm_ip, cu_ip=cu_ip, ct_ip=ct_ip)
+    #时间不够间隔
+    # json_temp = asyncio.run(webTestUnion.run_itdog_test(target_host=f"{temp_subdomain}.{domain_root}", custom_dns="119.29.29.29"))
+    # if json_temp:
+    #     print(json_temp)
+    # else:
+    #     print("\n脚本执行完毕，但未能获取到JSON结果。")
+
     #
     #
     # ###步骤2：清洗????按线路洗？
-    cesuck=[]
-    json_dx = asyncio.run(webTestUnion.run_cesu_test(target_urls=ct_ip, cookies=cesuck))
-    print(json_dx)
-    if json_dx:
-        filtered_list = filter_cesu_results(json_dx)
-        if filtered_list:
-            qualified_ips = [item['检测目标'] for item in filtered_list]
-            print(f"共找到 {len(qualified_ips)} 个合格的IP。")
-            print(qualified_ips)
-        else:
-            print("\n--- 筛选后无任何合格IP ---")
-    else:
-        print("\n[CESU.AI] 未能获取到JSON结果。")
+    # cesuck=[]
+    # json_dx = asyncio.run(webTestUnion.run_cesu_test(target_urls=ct_ip, cookies=cesuck))
+    # print(json_dx)
+    # if json_dx:
+    #     filtered_list = filter_cesu_results(json_dx)
+    #     if filtered_list:
+    #         qualified_ips = [item['检测目标'] for item in filtered_list]
+    #         print(f"共找到 {len(qualified_ips)} 个合格的IP。")
+    #         print(qualified_ips)
+    #     else:
+    #         print("\n--- 筛选后无任何合格IP ---")
+    # else:
+    #     print("\n[CESU.AI] 未能获取到JSON结果。")
 
 
 
     # 步骤3：更新&再次剔除
     logging.info("正在执行阿里云DNS更新...")
-    records = cf2alidns.query_all_domain_records(domain_name='jie02.top',subdomain='y')
-    print(records)#分批？
-    cf2alidns.update_aliyun_dns_records(cm_ip=cm_ip, cu_ip=cu_ip, ct_ip=ct_ip)
+    # records = cf2alidns.query_all_domain_records(domain_name='jie02.top',subdomain='y')
+    # print(records)#分批？
+
+    # cf2alidns.update_aliyun_dns_records(cm_ip=cm_ip, cu_ip=cu_ip, ct_ip=ct_ip)
     logging.info("阿里云DNS更新完成。")
 
     logging.info("--- 主流程成功执行完毕 ---")

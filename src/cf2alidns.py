@@ -18,8 +18,8 @@ logging.basicConfig(
 access_key_id = os.getenv('ALIYUN_ACCESS_KEY_ID')
 access_key_secret = os.getenv('ALIYUN_ACCESS_KEY_SECRET')
 PackageNum = int(os.getenv('ALIYUN_PACKAGE_NUM', 100))  # 套餐允许的记录数量，默认为100
-rr = os.getenv('domain_rr')  # 主机记录，例如 'www'
-xdomain = os.getenv('domain_root')  # 主域名，例如 'example.com'
+
+
 
 
 # 如果提供了凭据，则初始化AcsClient
@@ -173,30 +173,33 @@ def add_a_record(domain_name, rr, ip_addresses, line):
 
 # --- 本模块主功能函数 ---
 
-def update_aliyun_dns_records(cm_ip: list, cu_ip: list, ct_ip: list):
+def update_aliyun_dns_records(domain_rr: str, domain_root: str, cm_ip: list, cu_ip: list, ct_ip: list):
     """
     使用提供的IP列表更新阿里云的A记录。
 
     参数:
+        domain_rr (str): 主机记录 (例如 'www', 'temp01').
+        domain_root (str): 主域名 (例如 'example.com').
         cm_ip (list): 用于“移动”线路的IP列表。
         cu_ip (list): 用于“联通”线路的IP列表。
         ct_ip (list): 用于“电信”线路的IP列表。
     """
     logging.info("开始执行阿里云DNS更新流程...")
 
-    if not all([xdomain, rr, client]):
-        logging.error("域名、主机记录或阿里云客户端未配置。中止DNS更新。")
+    # 使用传入的参数替代全局环境变量
+    if not all([domain_root, domain_rr, client]):
+        logging.error("域名、主机记录或阿里云客户端未正确配置。中止DNS更新。")
         return
 
-    logging.info(f"正在为 {rr}.{xdomain} 更新记录")
+    logging.info(f"正在为 {domain_rr}.{domain_root} 更新记录")
 
     logging.info(f"为 'mobile' (移动) 线路添加 {len(cm_ip)} 条记录...")
-    add_a_record(xdomain, rr, cm_ip, 'mobile')
+    add_a_record(domain_root, domain_rr, cm_ip, 'mobile')
 
     logging.info(f"为 'unicom' (联通) 线路添加 {len(cu_ip)} 条记录...")
-    add_a_record(xdomain, rr, cu_ip, 'unicom')
+    add_a_record(domain_root, domain_rr, cu_ip, 'unicom')
 
     logging.info(f"为 'telecom' (电信) 线路添加 {len(ct_ip)} 条记录...")
-    add_a_record(xdomain, rr, ct_ip, 'telecom')
+    add_a_record(domain_root, domain_rr, ct_ip, 'telecom')
 
     logging.info("阿里云DNS更新流程执行完毕。")
