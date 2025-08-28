@@ -1,6 +1,7 @@
 services:
   cfsdns:
     build: .
+    image: wanxve0000/cfsdns:test
     environment:
       ALIYUN_ACCESS_KEY_ID: "ALIYUN_ACCESS_KEY_ID"
       ALIYUN_ACCESS_KEY_SECRET: "ALIYUN_ACCESS_KEY_SECRET"
