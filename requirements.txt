@@ -1,6 +1,6 @@
 python-dotenv
-alibabacloud-python-sdk-core
-alibabacloud-python-sdk-alidns
+aliyun-python-sdk-core
+aliyun-python-sdk-alidns
 beautifulsoup4
 cloudscraper
 pycryptodome
