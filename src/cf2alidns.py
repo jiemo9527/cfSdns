@@ -1,10 +1,13 @@
-import os
 from aliyunsdkcore.client import AcsClient
 from aliyunsdkalidns.request.v20150109.DescribeDomainRecordsRequest import DescribeDomainRecordsRequest
 from aliyunsdkalidns.request.v20150109.AddDomainRecordRequest import AddDomainRecordRequest
 from aliyunsdkalidns.request.v20150109.DeleteDomainRecordRequest import DeleteDomainRecordRequest
 import json
 import logging
+import os
+from dotenv import load_dotenv
+load_dotenv()
+
 
 # 为此模块配置日志
 logging.basicConfig(
@@ -14,12 +17,9 @@ logging.basicConfig(
 )
 
 # --- 从环境变量中读取配置 ---
-# 从环境变量中获取Access Key ID和Access Key Secret
 access_key_id = os.getenv('ALIYUN_ACCESS_KEY_ID')
 access_key_secret = os.getenv('ALIYUN_ACCESS_KEY_SECRET')
-PackageNum = int(os.getenv('ALIYUN_PACKAGE_NUM', 100))  # 套餐允许的记录数量，默认为100
-
-
+PackageNum = int(os.getenv('ALIYUN_PACKAGE_NUM', 100))
 
 
 # 如果提供了凭据，则初始化AcsClient
@@ -30,8 +30,7 @@ else:
     logging.error("未能从环境变量中获取 ALIYUN_ACCESS_KEY_ID 和 ALIYUN_ACCESS_KEY_SECRET。")
 
 
-# --- DNS辅助函数 ---
-
+# 总查询 关键字查询
 def query_all_domain_records(domain_name, subdomain=None):
     """
     查询并返回指定域名的记录。
@@ -90,7 +89,7 @@ def query_all_domain_records(domain_name, subdomain=None):
 
     return all_records
 
-
+#查询记录
 def record_exists(domain_name, rr, record_type, value, line):
     """检查指定的DNS记录是否已存在。"""
     if not client:
@@ -114,7 +113,7 @@ def record_exists(domain_name, rr, record_type, value, line):
         logging.error(f"检查记录是否存在时出错: {e}")
     return False
 
-
+#子功能1
 def delete_oldest_record(domain_name, rr, line):
     """查找并删除特定主机记录（RR）和线路的最早一条记录。"""
     if not client:
@@ -132,7 +131,7 @@ def delete_oldest_record(domain_name, rr, line):
     except Exception as e:
         logging.error(f"删除最旧记录时出错: {e}")
 
-
+#子功能2
 def add_record(domain_name, rr, record_type, value, line):
     """添加一条新的DNS记录，如果达到数量上限则删除最旧的记录。"""
     if not client:
@@ -162,44 +161,80 @@ def add_record(domain_name, rr, record_type, value, line):
         client.do_action_with_exception(request)
         logging.info(f"成功添加记录: {rr}.{domain_name} | {record_type} -> {value} ({line})")
     except Exception as e:
-        logging.error(f"添加记录失败 {rr}.{domain_name} -> {value} ({line}): {e}")
+        logging.warning(f"添加记录失败 {rr}.{domain_name} -> {value} ({line}): {e}")
 
-
+#子功能3
 def add_a_record(domain_name, rr, ip_addresses, line):
     """遍历IP地址列表，并将它们添加为A记录。"""
     for ip_address in ip_addresses:
         add_record(domain_name, rr, 'A', ip_address, line)
 
 
-# --- 本模块主功能函数 ---
-
-def update_aliyun_dns_records(domain_rr: str, domain_root: str, cm_ip: list, cu_ip: list, ct_ip: list):
+#合并功能
+def update_aliyun_dns_records(domain_rr: str, domain_root: str, ips_by_carrier: dict):
     """
-    使用提供的IP列表更新阿里云的A记录。
+    使用提供的IP字典更新阿里云的A记录（重构后的灵活版本）。
 
     参数:
-        domain_rr (str): 主机记录 (例如 'www', 'temp01').
+        domain_rr (str): 主机记录 (例如 'www', 'temp').
         domain_root (str): 主域名 (例如 'example.com').
-        cm_ip (list): 用于“移动”线路的IP列表。
-        cu_ip (list): 用于“联通”线路的IP列表。
-        ct_ip (list): 用于“电信”线路的IP列表。
+        ips_by_carrier (dict): 一个包含IP列表的字典。
+                               格式: {'线路名称': ['ip1', 'ip2'], ...}
+                               示例: {'mobile': ['1.1.1.1'], 'telecom': ['8.8.8.8']}
     """
     logging.info("开始执行阿里云DNS更新流程...")
 
-    # 使用传入的参数替代全局环境变量
     if not all([domain_root, domain_rr, client]):
         logging.error("域名、主机记录或阿里云客户端未正确配置。中止DNS更新。")
         return
 
     logging.info(f"正在为 {domain_rr}.{domain_root} 更新记录")
 
-    logging.info(f"为 'mobile' (移动) 线路添加 {len(cm_ip)} 条记录...")
-    add_a_record(domain_root, domain_rr, cm_ip, 'mobile')
+    # 遍历传入的字典，动态地为每个运营商（线路）更新记录
+    for carrier_line, ip_list in ips_by_carrier.items():
+        # 如果某个运营商的IP列表为空，则跳过
+        if not ip_list:
+            logging.info(f"线路 '{carrier_line}' 的IP列表为空，跳过更新。")
+            continue
 
-    logging.info(f"为 'unicom' (联通) 线路添加 {len(cu_ip)} 条记录...")
-    add_a_record(domain_root, domain_rr, cu_ip, 'unicom')
-
-    logging.info(f"为 'telecom' (电信) 线路添加 {len(ct_ip)} 条记录...")
-    add_a_record(domain_root, domain_rr, ct_ip, 'telecom')
+        logging.info(f"为 '{carrier_line}' 线路添加 {len(ip_list)} 条记录...")
+        add_a_record(domain_root, domain_rr, ip_list, carrier_line)
 
     logging.info("阿里云DNS更新流程执行完毕。")
+
+
+#删除记录
+def delete_record_by_value(domain_name: str, rr: str, value: str, line: str):
+    """
+    根据记录值（IP地址）和线路删除一条指定的A记录。
+
+    :param domain_name: 主域名
+    :param rr: 主机记录
+    :param value: 记录值 (IP地址)
+    :param line: 线路 ('telecom', 'unicom', 'mobile')
+    """
+    if not client:
+        logging.error("AcsClient未初始化，无法删除记录。")
+        return
+
+    try:
+        # 查询特定子域名的所有记录以找到匹配项
+        records = query_all_domain_records(domain_name, subdomain=rr)
+        record_to_delete = None
+        for record in records:
+            # 精确匹配 主机记录, IP地址, 线路, 和类型(A记录)
+            if record['RR'] == rr and record['Value'] == value and record['Line'].lower() == line.lower() and record['Type'] == 'A':
+                record_to_delete = record
+                break
+
+        if record_to_delete:
+            record_id = record_to_delete['RecordId']
+            request = DeleteDomainRecordRequest()
+            request.set_RecordId(record_id)
+            client.do_action_with_exception(request)
+            logging.info(f"成功删除记录: RR={rr}, Value={value}, Line={line}, RecordId={record_id}")
+        else:
+            logging.warning(f"未找到要删除的记录: RR={rr}, Value={value}, Line={line}")
+
+    except Exception as e:
+        logging.error(f"删除记录时发生错误 (RR={rr}, Value={value}, Line={line}): {e}")

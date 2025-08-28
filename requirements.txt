@@ -1,5 +1,7 @@
-cloudscraper
-requests
+python-dotenv
+alibabacloud-python-sdk-core
+alibabacloud-python-sdk-alidns
 beautifulsoup4
-aliyun-python-sdk-core
-aliyun-python-sdk-alidns
+cloudscraper
+pycryptodome
+playwright

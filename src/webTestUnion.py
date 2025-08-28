@@ -22,9 +22,9 @@ async def run_itdog_test(target_host: str, custom_dns: str):
             browser = await p.chromium.launch(headless=True)
             page = await browser.new_page()
 
-            print(f"步骤 1: 浏览器启动，正在导航到 https://www.itdog.cn/http/ ...")
+            print(f"步骤 1: 浏览器启动，正在导航到 https://www.itdog.cn/http")
             await page.goto("https://www.itdog.cn/http/", timeout=60000, wait_until="networkidle")
-            print("页面加载完成。")
+            # print("页面加载完成。")
 
             # --- WebSocket 监听器 ---
             def handle_ws_message(ws):
@@ -99,6 +99,7 @@ async def run_itdog_test(target_host: str, custom_dns: str):
             }''')
 
             if results:
+                print("##############json化数据获取完毕#################")
                 final_results = json.dumps(results, indent=2, ensure_ascii=False)
             else:
                 print("错误：未能找到结果表格 #simpletable。")
@@ -110,7 +111,7 @@ async def run_itdog_test(target_host: str, custom_dns: str):
         finally:
             if 'browser' in locals() and browser.is_connected():
                 await browser.close()
-                print("\n浏览器已关闭。")
+                # print("\n浏览器已关闭。")
 
     return final_results
 
@@ -259,18 +260,18 @@ async def run_cesu_test(target_urls: list, cookies: list = None):
 if __name__ == "__main__":
 
     ## 测试run_itdog_test
-    # json_output = asyncio.run(run_itdog_test(target_host="1.1.1.1", custom_dns="119.29.29.29"))
-    # if json_output:
-    #     print(json_output)
-    # else:
-    #     print("\n脚本执行完毕，但未能获取到JSON结果。")
-    ## 测试run_cesu_test
-
-    cesuck = [
-
-    ]
-    json_output = asyncio.run(run_cesu_test(target_urls=["1.1.1.1"], cookies=cesuck))
+    json_output = asyncio.run(run_itdog_test(target_host="1.1.1.1", custom_dns="119.29.29.29"))
     if json_output:
         print(json_output)
     else:
-        print("\n[CESU.AI] 未能获取到JSON结果。")
+        print("\n脚本执行完毕，但未能获取到JSON结果。")
+
+    ## 测试run_cesu_test
+    # cesuck = [
+    #
+    # ]
+    # json_output = asyncio.run(run_cesu_test(target_urls=["1.1.1.1"], cookies=cesuck))
+    # if json_output:
+    #     print(json_output)
+    # else:
+    #     print("\n[CESU.AI] 未能获取到JSON结果。")

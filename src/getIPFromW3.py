@@ -135,25 +135,25 @@ def get_cf_ips() -> Tuple[List[str], List[str], List[str]]:
     print(f"ip.164746.xyz 获取完成。共 {len(cm_16)} 个IP。")
 
     # 步骤 4: 列表去重和排序
-    print("\n--- 开始处理和合并IP列表 ---")
+
     final_ct_ip = sorted(list(set(all_ct_ips)))
     final_cm_ip = sorted(list(set(all_cm_ips)))
     final_cu_ip = sorted(list(set(all_cu_ips)))
 
     # 步骤 5: 剔除指定网段的IP
-    print("\n---  剔除 172.65.*.* 网段的IP ---")
+    print("\n剔除 172.65.*.* 网段的IP.")
     final_ct_ip_filtered = [ip for ip in final_ct_ip if not ip.startswith("172.65.")]
     final_cm_ip_filtered = [ip for ip in final_cm_ip if not ip.startswith("172.65.")]
     final_cu_ip_filtered = [ip for ip in final_cu_ip if not ip.startswith("172.65.")]
 
     # 步骤 6: 限制每个列表的IP数量
-    final_ct_ip_limited = final_ct_ip_filtered[-50:]
-    final_cm_ip_limited = final_cm_ip_filtered[-50:]
-    final_cu_ip_limited = final_cu_ip_filtered[-50:]
+    final_ct_ip_limited = final_ct_ip_filtered[-19:]
+    final_cm_ip_limited = final_cm_ip_filtered[-19:]
+    final_cu_ip_limited = final_cu_ip_filtered[-19:]
 
     print(
         f"处理后：电信 {len(final_ct_ip_limited)} 个, 移动 {len(final_cm_ip_limited)} 个, 联通 {len(final_cu_ip_limited)} 个。")
-    print("\n--- IP获取任务执行完毕 ---")
+    print("\n#########################IP获取任务执行完毕#########################")
     return final_ct_ip_limited, final_cm_ip_limited, final_cu_ip_limited
 
 

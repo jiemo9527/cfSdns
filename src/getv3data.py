@@ -82,7 +82,6 @@ def v3data():
                 final_data = json.loads(decrypted_text)
 
                 # --- 新增：数据筛选 ---
-                print("\n---------- 开始筛选数据... ----------")
                 cm_ip = []
                 cu_ip = []
                 ct_ip = []
