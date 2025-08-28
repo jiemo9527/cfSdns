@@ -110,8 +110,15 @@ async def run_itdog_test(target_host: str, custom_dns: str):
             print("已保存截图到 error_screenshot.png 文件，请查看。")
         finally:
             if 'browser' in locals() and browser.is_connected():
-                await browser.close()
-                # print("\n浏览器已关闭。")
+                print("准备关闭浏览器...")
+                try:
+                    # 为 browser.close() 添加10秒的超时
+                    await asyncio.wait_for(browser.close(), timeout=10.0)
+                    print("浏览器已成功关闭。")
+                except asyncio.TimeoutError:
+                    print("关闭浏览器超时（超过10秒），浏览器进程可能已无响应。继续执行...")
+                except Exception as e:
+                    print(f"关闭浏览器时发生未知错误: {e}")
 
     return final_results
 
