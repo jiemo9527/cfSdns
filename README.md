@@ -1,5 +1,50 @@
-# 关于
-重新构建了一套，集互联网优选服务器之大成者，适用于优化网站的访问。
+# Test
+test分支引入了奇奇怪怪的数据源，加入了缓存域和自动删除记录功能（不一定是更好）
+
+### docker-compose运行
+```
+services:
+  app:
+    image: wanxve0000/cfsdns:test
+    environment:
+      ALIYUN_ACCESS_KEY_ID: "ALIYUN_ACCESS_KEY_ID"
+      ALIYUN_ACCESS_KEY_SECRET: "ALIYUN_ACCESS_KEY_SECRET"
+      ALIYUN_PACKAGE_NUM: "100"
+      SLEEPTIME: "480"
+      domain_rr: "www"
+      domain_root: "domain.com"
+```
+
+### python运行
+```
+cat << EOF > .env
+# 阿里云 DNS 配置
+ALIYUN_ACCESS_KEY_ID="请在这里填入您的Access Key ID"
+ALIYUN_ACCESS_KEY_SECRET="请在这里填入您的Access Key Secret"
+ALIYUN_PACKAGE_NUM="100" #alidns套餐线路数上限
+SLEEPTIME="480" #任务休眠时间
+
+# 生效域名配置
+domain_rr="www"
+domain_root="domain.com"
+EOF
+
+python main.py
+```
+
+### docker-cli运行
+```
+docker run --rm \
+  -d \
+  --name cfsdns-test \
+  -e ALIYUN_ACCESS_KEY_ID="请替换为您的AccessKeyID" \
+  -e ALIYUN_ACCESS_KEY_SECRET="请替换为您的AccessKeySecret" \
+  -e ALIYUN_PACKAGE_NUM="100" \
+  -e domain_rr="www" \
+  -e SLEEPTIME="480" \
+  -e domain_root="domain.com" \
+  wanxve0000/cfsdns:test
+```
 
 为什么从 **dnspod（腾讯）** 转到 **阿里云 DNS**？  
 主要还是考虑每条线路限制数的问题。

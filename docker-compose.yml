@@ -1,0 +1,11 @@
+services:
+  cfsdns:
+    build: .
+    environment:
+      ALIYUN_ACCESS_KEY_ID: "ALIYUN_ACCESS_KEY_ID"
+      ALIYUN_ACCESS_KEY_SECRET: "ALIYUN_ACCESS_KEY_SECRET"
+      ALIYUN_PACKAGE_NUM: "100"
+      SLEEPTIME: "480"
+      domain_rr: "www"
+      domain_root: "domian.com"
+    tty: true

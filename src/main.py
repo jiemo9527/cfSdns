@@ -2,6 +2,9 @@
 import asyncio
 import os
 import random
+import sys
+from time import sleep
+
 from dotenv import load_dotenv
 import getIPFromW3
 import webTestUnion
@@ -178,5 +181,19 @@ if __name__ == '__main__':
         level=logging.INFO,
         format='%(asctime)s - %(levelname)s - [Main] - %(message)s'
     )
-    #想法很多，目前只实现了一条路径。fromBc未添加
-    main()
+
+    # 想法很多，目前只实现了一条路径。fromBc未添加
+
+    try:
+        while True:
+            try:
+                main()
+            except Exception as e:
+                logging.error(f"任务执行周期中发生错误: {e}", exc_info=True)
+            logging.info("本轮任务结束，休眠...")
+            sleep(int(os.getenv('SLEEPTIME')))
+
+    except KeyboardInterrupt:
+        # 允许用户通过 Ctrl+C停止程序
+        logging.info("接收到停止信号 (Ctrl+C)，程序正在退出。")
+        sys.exit(0)
