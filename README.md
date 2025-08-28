@@ -75,31 +75,13 @@ docker run --rm \
 
 ---
 
-# 一般环境
-1.  `pip install aliyun-python-sdk-core aliyun-python-sdk-alidns cloudscraper`
-2.  填写alidns-key
-3.  每5分钟`python cf2alidns.py`（不得低于2分钟/次）
 
-# docker部署
-```
-docker run -d --name cfsdns wanxve0000/cfsdns:latest
-docker exec -it cfsdns bash
-crontab -e#填写参数
-```
-说明
-```
-ALIYUN_ACCESS_KEY_ID="KEY_ID"
-ALIYUN_ACCESS_KEY_SECRET="KEY_SECRET"
-ALIYUN_PACKAGE_NUM="线路数(免费10，付费100默认值)"
-domain_rr="子域名"
-domain_root="主域/根域"
-```
 
-### 上效果图
+
+### test分支新效果图
 ![Snipaste_01.png](Snipaste_01.png)
 ![Snipaste_02.png](Snipaste_02.png)
 ### 感谢
 <https://github.com/ddgth/cf2dns>
-
 
 <https://github.com/ZhiXuanWang/cf-speed-dns>
