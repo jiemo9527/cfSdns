@@ -1,0 +1,8 @@
+version: '3.8'
+
+services:
+  cf-dns-updater:
+    build: .
+    env_file:
+      - .env
+    tty: true

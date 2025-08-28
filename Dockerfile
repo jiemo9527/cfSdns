@@ -11,25 +11,14 @@ WORKDIR /app
 # 复制项目文件到容器中
 COPY . /app
 
-# 安装依赖
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 安装 cron 服务、vim 和 nano
-RUN apt-get update && apt-get install -y \
-    cron \
-    vim \
-    nano \
-    && rm -rf /var/lib/apt/lists/*
+# 步骤 5: 安装 Playwright 所需的浏览器核心
+RUN playwright install chromium
 
+# 步骤 6: 复制项目中的所有文件到工作目录
+COPY . .
 
-# 复制 crontab 配置文件
-COPY crontab_config /etc/cron.d/cf2alidns_cron
-
-# 设置 crontab 文件的权限
-RUN chmod 0644 /etc/cron.d/cf2alidns_cron
-
-# 应用 crontab 配置
-RUN crontab /etc/cron.d/cf2alidns_cron
-
-# 启动 cron 服务
-CMD ["cron", "-f"]
+# 步骤 7: 设置容器启动时要执行的默认命令
+# 当容器运行时，会自动执行 python main.py
+CMD ["python", "main.py"]
