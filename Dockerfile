@@ -18,5 +18,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # 步骤 7: 设置容器启动时要执行的默认命令
-# 当容器运行时，会自动执行 python main.py
 CMD ["python", "main.py"]
