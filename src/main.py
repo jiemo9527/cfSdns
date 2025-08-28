@@ -2,7 +2,6 @@
 import asyncio
 import os
 import random
-import time
 from dotenv import load_dotenv
 import getIPFromW3
 import webTestUnion
@@ -70,16 +69,6 @@ def main():
     logging.info("@@@@@ 开始一次完整的IP筛选与更新任务 @@@@@")
 
     # 准备工作：为确保环境干净，先删除 temp 子域名的所有记录
-    logging.info(f"正在清理临时域名 {temp_subdomain}.{domain_root} 的旧记录...")
-    existing_temp_records = cf2alidns.query_all_domain_records(domain_root, subdomain=temp_subdomain)
-    if existing_temp_records:
-        for record in existing_temp_records:
-            # 直接使用 delete_record_by_value 更安全
-            cf2alidns.delete_record_by_value(domain_root, temp_subdomain, record['Value'], record['Line'])
-        logging.info(f"临时域名 {len(existing_temp_records)} 条旧记录清理完成。")
-    else:
-        logging.info("临时域名无旧记录，无需清理。")
-
     # 步骤1：获取IP源
     logging.info("步骤1：开始从所有来源获取IP...")
     ct_ip, cm_ip, cu_ip = getIPFromW3.get_cf_ips()
@@ -96,9 +85,6 @@ def main():
     # 使用正确的参数名 ips_by_carrier 调用函数
     cf2alidns.update_aliyun_dns_records(domain_rr=temp_subdomain, domain_root=domain_root,
                                         ips_by_carrier=initial_ips_dict)
-
-    logging.info("等待30秒以便临时域名DNS生效...")
-    time.sleep(30)
 
     json_temp = asyncio.run(
         webTestUnion.run_itdog_test(target_host=f"{temp_subdomain}.{domain_root}", custom_dns="119.29.29.29"))
@@ -128,12 +114,9 @@ def main():
     logging.info("生产域名DNS更新完成。")
 
     # 步骤5：第二次测速（验证）并剔除不良记录
-    logging.info("步骤5：等待60秒以便生产域名DNS生效，准备进行最终验证...")
-    time.sleep(60)
 
     json_validate = asyncio.run(
         webTestUnion.run_itdog_test(target_host=f"{domain_rr}.{domain_root}", custom_dns="223.5.5.5"))
-
     if json_validate:
         logging.info("最终验证测速完成，开始检查并删除不良DNS记录...")
         try:

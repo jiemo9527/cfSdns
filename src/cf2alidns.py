@@ -161,7 +161,8 @@ def add_record(domain_name, rr, record_type, value, line):
         client.do_action_with_exception(request)
         logging.info(f"成功添加记录: {rr}.{domain_name} | {record_type} -> {value} ({line})")
     except Exception as e:
-        logging.warning(f"添加记录失败 {rr}.{domain_name} -> {value} ({line}): {e}")
+        pass
+        # logging.warning(f"添加记录失败 {rr}.{domain_name} -> {value} ({line}): {e}")
 
 #子功能3
 def add_a_record(domain_name, rr, ip_addresses, line):
