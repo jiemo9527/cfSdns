@@ -1,5 +1,5 @@
 services:
-  cf-dns-updater:
+  cfsdns-test:
     build: .
     env_file:
       - .env
