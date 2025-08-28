@@ -68,7 +68,7 @@ def v3data():
 
         # 发送POST请求
         print("正在发送请求...")
-        response = requests.post(url, headers=headers, json=payload)
+        response = requests.post(url, headers=headers, json=payload, timeout=12)
         response.raise_for_status()
         response_json = response.json()
         print("请求成功，正在解密...")

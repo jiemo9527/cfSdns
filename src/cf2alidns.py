@@ -25,7 +25,8 @@ PackageNum = int(os.getenv('ALIYUN_PACKAGE_NUM', 100))
 # 如果提供了凭据，则初始化AcsClient
 client = None
 if access_key_id and access_key_secret:
-    client = AcsClient(access_key_id, access_key_secret, 'cn-hangzhou')
+    # 为所有阿里云API请求设置15秒的默认超时时间
+    client = AcsClient(access_key_id, access_key_secret, 'cn-hangzhou', timeout=15)
 else:
     logging.error("未能从环境变量中获取 ALIYUN_ACCESS_KEY_ID 和 ALIYUN_ACCESS_KEY_SECRET。")
 
