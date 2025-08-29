@@ -9,12 +9,13 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-# 为此模块配置日志
-logging.basicConfig(
-    filename='./cf2alidns.log',
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+#配置日志
+# logging.basicConfig(
+#     filename='./cf2alidns.log',
+#     level=logging.INFO,
+#     format='%(asctime)s - %(levelname)s - %(message)s'
+# )
+logger = logging.getLogger(__name__)
 
 # --- 从环境变量中读取配置 ---
 access_key_id = os.getenv('ALIYUN_ACCESS_KEY_ID')

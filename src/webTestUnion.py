@@ -23,7 +23,7 @@ async def run_itdog_test(target_host: str, custom_dns: str):
             page = await browser.new_page()
 
             print(f"步骤 1: 浏览器启动，正在导航到 https://www.itdog.cn/http")
-            await page.goto("https://www.itdog.cn/http/", timeout=60000, wait_until="networkidle")
+            await page.goto("https://www.itdog.cn/http/", timeout=15000, wait_until="networkidle")
             # print("页面加载完成。")
 
             # --- WebSocket 监听器 ---
@@ -159,7 +159,7 @@ async def run_cesu_test(target_urls: list, cookies: list = None):
 
             # --- [代码优化] ---
             # 1. 优化页面加载策略，仅等待DOM加载完成，不必等待所有资源
-            await page.goto("https://www.cesu.ai/http_batch", timeout=60000, wait_until="domcontentloaded")
+            await page.goto("https://www.cesu.ai/http_batch", timeout=15000, wait_until="domcontentloaded")
             print("页面基本结构加载完成。")
 
             # 2. 显式等待核心交互元素加载完成，确保脚本稳定
@@ -201,7 +201,7 @@ async def run_cesu_test(target_urls: list, cookies: list = None):
             print(f"成功填写 {len(target_urls)} 个URL。")
 
             print("步骤 3: 点击“批量检测”按钮并等待页面跳转...")
-            async with page.expect_navigation(wait_until="networkidle", timeout=60000):
+            async with page.expect_navigation(wait_until="networkidle", timeout=15000):
                 await submit_button.click()  # 使用之前定位好的元素
             print("页面跳转成功，测试已启动，正在等待所有任务完成信号...")
 
