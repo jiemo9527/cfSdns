@@ -157,8 +157,16 @@ def main():
 
             if records_to_delete:
                 unique_records_to_delete = [dict(t) for t in {tuple(d.items()) for d in records_to_delete}]
-                logging.info(f"共找到 {len(unique_records_to_delete)} 条唯一的不良记录需要删除。")
-                for record in unique_records_to_delete:
+                total_to_delete = len(unique_records_to_delete)
+                logging.info(f"共找到 {total_to_delete} 条唯一的不良记录需要删除。")
+
+                records_to_process = unique_records_to_delete
+                # 如果待删除记录超过10条，则只处理前5条
+                if total_to_delete > 10:
+                    logging.warning(f"待删除记录超过10条，将只处理前5条。")
+                    records_to_process = unique_records_to_delete[:5]
+
+                for record in records_to_process:
                     cf2alidns.delete_record_by_value(
                         domain_name=domain_root,
                         rr=domain_rr,
