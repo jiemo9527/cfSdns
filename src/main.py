@@ -119,7 +119,7 @@ def main():
     # 步骤5：第二次测速（验证）并剔除不良记录
 
     json_validate = asyncio.run(
-        webTestUnion.run_itdog_test(target_host=f"{domain_rr}.{domain_root}", custom_dns="223.5.5.5"))
+        webTestUnion.run_itdog_test(target_host=f"{domain_rr}.{domain_root}", custom_dns="119.29.29.29"))
     if json_validate:
         logging.info("最终验证测速完成，开始检查并删除不良DNS记录...")
         try:

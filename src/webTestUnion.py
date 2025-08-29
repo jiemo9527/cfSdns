@@ -47,16 +47,16 @@ async def run_itdog_test(target_host: str, custom_dns: str):
             await page.get_by_placeholder("例：example.com 、https://example.com/xxx.html").fill(target_host)
 
             print("步骤 3: 展开高级选项并设置自定义DNS...")
-            await page.get_by_role("button", name="高级选项").click()
-            await page.locator('input[name="dns_server_type"][value="custom"]').check()
-            await page.locator('#dns_server').fill(custom_dns)
+            await page.get_by_role("button", name="高级选项").click(timeout=10000)
+            await page.locator('input[name="dns_server_type"][value="custom"]').check(timeout=10000)
+            await page.locator('#dns_server').fill(custom_dns,timeout=10000)
             print(f"成功设置DNS为: {custom_dns}")
 
             print("步骤 4: 点击“快速测试”按钮...")
-            await page.get_by_role("button", name="快速测试").click()
+            await page.get_by_role("button", name="快速测试").click(timeout=10000)
             print("测试已启动，正在等待完成信号...")
 
-            await asyncio.wait_for(test_finished_event.wait(), timeout=300)
+            await asyncio.wait_for(test_finished_event.wait(), timeout=60)
 
             # --- 步骤 5: 在浏览器中解析表格并提取为清洗后的JSON ---
             print("\n步骤 5: 正在提取并清洗结果表格，转换为JSON...")

@@ -1,3 +1,5 @@
+import random
+
 import requests
 import re
 from typing import List, Tuple
@@ -147,9 +149,9 @@ def get_cf_ips() -> Tuple[List[str], List[str], List[str]]:
     final_cu_ip_filtered = [ip for ip in final_cu_ip if not ip.startswith("172.65.")]
 
     # 步骤 6: 限制每个列表的IP数量
-    final_ct_ip_limited = final_ct_ip_filtered[-19:]
-    final_cm_ip_limited = final_cm_ip_filtered[-19:]
-    final_cu_ip_limited = final_cu_ip_filtered[-19:]
+    final_ct_ip_limited = random.sample(final_ct_ip_filtered, min(19, len(final_ct_ip_filtered)))
+    final_cm_ip_limited = random.sample(final_cm_ip_filtered, min(19, len(final_cm_ip_filtered)))
+    final_cu_ip_limited = random.sample(final_cu_ip_filtered, min(19, len(final_cu_ip_filtered)))
 
     print(
         f"处理后：电信 {len(final_ct_ip_limited)} 个, 移动 {len(final_cm_ip_limited)} 个, 联通 {len(final_cu_ip_limited)} 个。")

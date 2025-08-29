@@ -142,7 +142,7 @@ def add_record(domain_name, rr, record_type, value, line):
 
     try:
         if record_exists(domain_name, rr, record_type, value, line):
-            logging.info(f"记录已存在，跳过添加: {rr}.{domain_name} -> {value} ({line})")
+            # logging.info(f"记录已存在，跳过添加: {rr}.{domain_name} -> {value} ({line})")
             return
 
         records = query_all_domain_records(domain_name=domain_name)
@@ -176,32 +176,87 @@ def add_a_record(domain_name, rr, ip_addresses, line):
 #合并功能
 def update_aliyun_dns_records(domain_rr: str, domain_root: str, ips_by_carrier: dict):
     """
-    使用提供的IP字典更新阿里云的A记录（重构后的灵活版本）。
-
-    参数:
-        domain_rr (str): 主机记录 (例如 'www', 'temp').
-        domain_root (str): 主域名 (例如 'example.com').
-        ips_by_carrier (dict): 一个包含IP列表的字典。
-                               格式: {'线路名称': ['ip1', 'ip2'], ...}
-                               示例: {'mobile': ['1.1.1.1'], 'telecom': ['8.8.8.8']}
+    高效地更新阿里云的A记录。
+    此函数会先查询一次现有记录，然后只对不存在的记录执行添加操作。
+    如果某个线路的记录数达到上限，则会先删除最旧的记录再添加。
     """
-    logging.info("开始执行阿里云DNS更新流程...")
+    logging.info("开始执行高效的阿里云DNS更新流程...")
 
     if not all([domain_root, domain_rr, client]):
         logging.error("域名、主机记录或阿里云客户端未正确配置。中止DNS更新。")
         return
 
-    logging.info(f"正在为 {domain_rr}.{domain_root} 更新记录")
+    # logging.info(f"正在为 {domain_rr}.{domain_root} 更新记录, 首先获取所有现有记录...")
+    try:
+        # 1. 一次性获取子域名的所有记录
+        existing_records = query_all_domain_records(domain_root, subdomain=domain_rr)
 
-    # 遍历传入的字典，动态地为每个运营商（线路）更新记录
+        # 2. 创建数据结构以便高效处理
+        existing_record_set = {(rec['Value'], rec['Line'].lower()) for rec in existing_records}
+        records_by_line = {}
+        for rec in existing_records:
+            line = rec['Line'].lower()
+            if line not in records_by_line:
+                records_by_line[line] = []
+            records_by_line[line].append(rec)
+
+        record_counts = {line: len(recs) for line, recs in records_by_line.items()}
+        logging.info(f"找到 {len(existing_records)} 条关于 '{domain_rr}' 的现有记录。")
+
+    except Exception as e:
+        logging.error(f"获取现有DNS记录时失败: {e}")
+        return
+
+    # 3. 遍历需要添加的IP列表
     for carrier_line, ip_list in ips_by_carrier.items():
-        # 如果某个运营商的IP列表为空，则跳过
+        line_key = carrier_line.lower()
         if not ip_list:
-            logging.info(f"线路 '{carrier_line}' 的IP列表为空，跳过更新。")
+            logging.info(f"线路 '{carrier_line}' 的IP列表为空，跳过。")
             continue
 
-        logging.info(f"为 '{carrier_line}' 线路添加 {len(ip_list)} 条记录...")
-        add_a_record(domain_root, domain_rr, ip_list, carrier_line)
+        logging.info(f"正在处理 '{carrier_line}' 线路的 {len(ip_list)} 个IP...")
+        for ip_address in ip_list:
+            # 4. 检查记录是否已存在，如果存在则跳过
+            if (ip_address, line_key) in existing_record_set:
+                continue
+
+            # 5. 检查是否达到数量上限
+            current_count = record_counts.get(line_key, 0)
+            if current_count >= PackageNum:
+                # logging.warning(f"'{carrier_line}' 线路记录数已达上限 ({PackageNum})，将删除最旧的一条。")
+                try:
+                    line_records = records_by_line.get(line_key, [])
+                    if not line_records: continue
+
+                    oldest_record = min(line_records, key=lambda x: x.get('CreateTimestamp', float('inf')))
+                    delete_req = DeleteDomainRecordRequest()
+                    delete_req.set_RecordId(oldest_record['RecordId'])
+                    client.do_action_with_exception(delete_req)
+                    # logging.info(f"成功删除最旧记录: {oldest_record['Value']} ({carrier_line})")
+
+                    line_records.remove(oldest_record)
+                    record_counts[line_key] -= 1
+                except Exception as e:
+                    logging.error(f"删除最旧记录时失败: {e}")
+                    continue
+
+            # 6. 添加新记录
+            try:
+                add_req = AddDomainRecordRequest()
+                add_req.set_accept_format('json')
+                add_req.set_DomainName(domain_root)
+                add_req.set_RR(domain_rr)
+                add_req.set_Type('A')
+                add_req.set_Value(ip_address)
+                add_req.set_Line(carrier_line)
+
+                client.do_action_with_exception(add_req)
+                logging.info(f"成功添加记录: {ip_address} ({carrier_line})")
+
+                existing_record_set.add((ip_address, line_key))
+                record_counts[line_key] = record_counts.get(line_key, 0) + 1
+            except Exception as e:
+                logging.warning(f"添加记录失败 {ip_address} ({carrier_line}): {e}")
 
     logging.info("阿里云DNS更新流程执行完毕。")
 
