@@ -29,6 +29,9 @@ domain_rr="www"
 domain_root="domain.com"
 EOF
 
+pip install -r requirements.txt
+playwright install-deps
+playwright install chromium
 python main.py
 ```
 
