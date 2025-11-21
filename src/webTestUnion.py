@@ -1,30 +1,71 @@
 import asyncio
 import json
+import os
+import platform
 from playwright.async_api import async_playwright
 
 
 async def run_itdog_test(target_host: str, custom_dns: str):
     """
-    使用Playwright全自动执行IT-Dog网站测速，并返回清洗、格式化后的JSON结果。
-
-    :param target_host: 需要测试的目标域名或IP地址。
-    :param custom_dns: 用于测试的自定义DNS服务器IP。
-    :return: 包含测试结果的JSON字符串，如果失败则返回None。
+    Windows/Linux 通用兼容版。
+    自动处理路径，配合 XVFB 在 Linux 上实现伪装。
     """
-    # 创建一个异步事件，用作测试完成的信号
-    test_finished_event = asyncio.Event()
+    # 1. 动态设置 User Data 路径 (使用相对路径，跨平台兼容)
+    # 在脚本同级目录下生成 ./itdog_userdata 文件夹
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    user_data_dir = os.path.join(current_dir, "itdog_userdata")
 
-    # 最终的JSON结果
+    # 2. 检测操作系统
+    system_name = platform.system()
+    print(f"当前运行环境: {system_name}")
+    print(f"用户数据目录: {user_data_dir}")
+
+    # 3. 关键伪装参数 (Linux下存活的关键)
+    # 即使是新生成的 Profile，加上这些参数也能极大幅度降低被杀概率
+    launch_args = [
+        "--disable-blink-features=AutomationControlled",
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-infobars",
+        "--window-size=1920,1080",  # 强制设置分辨率
+    ]
+
+    ignore_args = ["--enable-automation"]
+
+    test_finished_event = asyncio.Event()
     final_results = None
 
     async with async_playwright() as p:
         try:
-            browser = await p.chromium.launch(headless=True)
-            page = await browser.new_page()
+            # 4. 启动浏览器
+            # 注意：在 Linux 上我们依然设置 headless=False，依靠 xvfb 来运行
+            # 这样可以保留浏览器的完整指纹
+            print("正在启动浏览器 (持久化模式)...")
 
-            print(f"步骤 1: 浏览器启动，正在导航到 https://www.itdog.cn/http")
-            await page.goto("https://www.itdog.cn/http/", timeout=60000, wait_until="networkidle")
-            # print("页面加载完成。")
+            context = await p.chromium.launch_persistent_context(
+                user_data_dir,
+                headless=True,  # 重点！无论 Win 还是 Linux 都设为 False
+                args=launch_args,
+                ignore_default_args=ignore_args,
+                viewport={"width": 1920, "height": 1080},
+                # Linux 上可能没有安装 Google Chrome，所以去掉 channel="chrome"，使用默认 Chromium 兼容性更好
+                # 如果你 Windows 上报错，可以把下面这行取消注释：
+                # channel="chrome" if system_name == "Windows" else None
+            )
+
+            page = await context.new_page()
+
+            # 5. 注入防检测 JS (双重保险)
+            await context.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            """)
+
+            print(f"步骤 1: 导航到 ITDOG...")
+            try:
+                await page.goto("https://www.itdog.cn/http/", timeout=60000, wait_until="domcontentloaded")
+            except Exception as e:
+                print(f"首次加载异常 (可能是网络波动): {e}，尝试刷新...")
+                await page.reload()
 
             # --- WebSocket 监听器 ---
             def handle_ws_message(ws):
@@ -32,108 +73,101 @@ async def run_itdog_test(target_host: str, custom_dns: str):
                     try:
                         data = json.loads(payload_str)
                         if data.get("type") == "finished":
-                            print("\n检测到 WebSocket 中的 'type: finished' 信号，测试完成！")
+                            print(">>> 检测到完成信号！")
                             test_finished_event.set()
-                    except (json.JSONDecodeError, TypeError):
+                    except:
                         pass
 
                 ws.on("framereceived", process_payload)
 
             page.on("websocket", handle_ws_message)
-            print("WebSocket 监听器已设置，将静默运行直到测试结束...")
 
-            # --- 步骤 2: 操作页面 ---
-            print(f"步骤 2: 填写测试域名: {target_host}")
-            await page.get_by_placeholder("例：example.com 、https://example.com/xxx.html").fill(target_host)
+            # --- 页面操作 ---
+            print(f"步骤 2: 填写目标 {target_host}")
+            # 稍微 sleep 一下，模拟真人
+            await page.wait_for_timeout(1500)
+            await page.get_by_placeholder("例：example.com").fill(target_host)
 
-            print("步骤 3: 展开高级选项并设置自定义DNS...")
-            await page.get_by_role("button", name="高级选项").click(timeout=10000)
-            await page.locator('input[name="dns_server_type"][value="custom"]').check(timeout=10000)
-            await page.locator('#dns_server').fill(custom_dns,timeout=10000)
-            print(f"成功设置DNS为: {custom_dns}")
+            print("步骤 3: 设置 DNS...")
+            await page.get_by_role("button", name="高级选项").click()
+            # 使用 force=True 防止被悬浮窗遮挡
+            await page.locator('input[name="dns_server_type"][value="custom"]').check(force=True)
+            await page.locator('#dns_server').fill(custom_dns)
 
-            print("步骤 4: 点击“快速测试”按钮...")
-            await page.get_by_role("button", name="快速测试").click(timeout=10000)
-            print("测试已启动，正在等待完成信号...")
+            print("步骤 4: 点击测试...")
+            await page.get_by_role("button", name="快速测试").click()
 
+            print("等待结果 (最多60秒)...")
             await asyncio.wait_for(test_finished_event.wait(), timeout=60)
 
-            # --- 步骤 5: 在浏览器中解析表格并提取为清洗后的JSON ---
-            print("\n步骤 5: 正在提取并清洗结果表格，转换为JSON...")
+            # --- 结果提取 ---
+            print("步骤 5: 提取数据...")
+            # 给一点时间让表格最后渲染
+            await page.wait_for_timeout(1000)
 
-            # 【核心修正】注入的JavaScript代码现在会进行数据清洗和字段过滤
             results = await page.evaluate('''() => {
                 const table = document.querySelector("#simpletable");
                 if (!table) return null;
-
-                // 提取表头，并过滤掉我们不需要的列
-                const unwanted_headers = ['Head', '赞助商广告'];
+                const unwanted = ['Head', '赞助商广告'];
                 const headers = Array.from(table.querySelectorAll("thead th"))
                                      .map((th, index) => ({ text: th.innerText.trim(), index }))
-                                     .filter(header => !unwanted_headers.includes(header.text));
-
+                                     .filter(h => !unwanted.includes(h.text));
                 const rows = Array.from(table.querySelectorAll("tbody tr.node_tr"));
-
-                const data = rows.map(row => {
+                return rows.map(row => {
                     const cells = Array.from(row.querySelectorAll("td"));
                     const rowData = {};
-
-                    headers.forEach(headerInfo => {
-                        const cell = cells[headerInfo.index];
-                        if (cell) {
-                            let cellContent = cell.innerText.trim();
-                            // 如果是“检测点”这一列，进行特别清洗
-                            if (headerInfo.text === '检测点') {
-                                // 将换行符和多个空白符替换为单个空格
-                                cellContent = cellContent.replace(/\\s+/g, ' ').trim();
-                            }
-                            rowData[headerInfo.text] = cellContent;
-                        } else {
-                            rowData[headerInfo.text] = '';
-                        }
+                    headers.forEach(h => {
+                        rowData[h.text] = cells[h.index] ? cells[h.index].innerText.trim().replace(/\\s+/g, ' ') : '';
                     });
                     return rowData;
                 });
-
-                return data;
             }''')
 
             if results:
-                print("##############json化数据获取完毕#################")
                 final_results = json.dumps(results, indent=2, ensure_ascii=False)
             else:
-                print("错误：未能找到结果表格 #simpletable。")
+                print("警告：未找到结果表格。")
 
         except Exception as e:
-            await page.screenshot(path="error_screenshot.png")
-            print(f"\n操作页面时发生错误: {e}")
-            print("已保存截图到 error_screenshot.png 文件，请查看。")
+            print(f"运行出错: {e}")
+            # 保存截图以便在 Linux 上排查
+            if 'page' in locals():
+                await page.screenshot(path="linux_error.png")
         finally:
-            if 'browser' in locals() and browser.is_connected():
-                print("准备关闭浏览器...")
-                try:
-                    # 为 browser.close() 添加10秒的超时
-                    await asyncio.wait_for(browser.close(), timeout=10.0)
-                    print("浏览器已成功关闭。")
-                except asyncio.TimeoutError:
-                    print("关闭浏览器超时（超过10秒），浏览器进程可能已无响应。继续执行...")
-                except Exception as e:
-                    print(f"关闭浏览器时发生未知错误: {e}")
+            if 'context' in locals():
+                await context.close()
 
     return final_results
 
 
 async def run_cesu_test(target_urls: list, cookies: list = None):
     """
-    使用Playwright全自动执行 CESU.AI 批量网站测速，并返回最终清洗、结构化后的JSON结果。
-
-    :param target_urls: 需要测试的URL列表 (例如: ["https://www.cesu.ai"])
-    :param cookies: (可选) 一个包含Cookie字典的列表。如果为None，则不注入Cookie。
-    :return: 包含测试结果的JSON字符串，如果失败则返回None。
+    [升级版] 全自动执行 CESU.AI 测速。
+    特性：
+    1. 支持 Windows/Linux 通用路径 (itdog/cesu 分离存储)。
+    2. 使用 headless=False + 伪装参数绕过反爬。
+    3. 必须配合 xvfb 在 Linux 上运行。
     """
     if not target_urls:
         print("错误：目标URL列表不能为空。")
         return None
+
+    # --- 1. 路径与系统配置 (复用核心策略) ---
+    # 在脚本同级目录下生成独立的 ./cesu_userdata 文件夹，避免跟 itdog 冲突
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    user_data_dir = os.path.join(current_dir, "cesu_userdata")
+
+    print(f"[CESU] 用户数据目录: {user_data_dir}")
+
+    # 核心伪装参数
+    launch_args = [
+        "--disable-blink-features=AutomationControlled",
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-infobars",
+        "--window-size=1920,1080",
+    ]
+    ignore_args = ["--enable-automation"]
 
     num_urls = len(target_urls)
     finish_count = 0
@@ -142,37 +176,46 @@ async def run_cesu_test(target_urls: list, cookies: list = None):
 
     async with async_playwright() as p:
         try:
-            browser = await p.chromium.launch(headless=True)  # 调试时可改为 headless=False
-            context = await browser.new_context()
+            # --- 2. 启动浏览器 (持久化模式) ---
+            print(f"步骤 1: 启动浏览器 (Headless=False 伪装模式)...")
 
+            # 使用 launch_persistent_context 替代 launch
+            context = await p.chromium.launch_persistent_context(
+                user_data_dir,
+                headless=True,  # 关键：Linux下配合xvfb使用
+                args=launch_args,
+                ignore_default_args=ignore_args,
+                viewport={"width": 1920, "height": 1080}
+            )
+
+            # --- 3. 注入防检测脚本 ---
+            await context.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            """)
+
+            # 如果传入了特定的 cookies 参数，手动注入
+            # (注意：持久化模式会自动保存之前的 cookie，这里仅用于强制覆盖或首次注入)
             if cookies:
-                print("检测到传入Cookie，正在设置...")
+                print("检测到传入 Cookies，正在注入...")
                 await context.add_cookies(cookies)
-                print("Cookie 设置成功。")
-            else:
-                print("未传入Cookie，将以游客状态执行。")
 
             page = await context.new_page()
 
-            print("--- [CESU.AI] 任务开始 ---")
-            print(f"步骤 1: 浏览器启动，共 {num_urls} 个URL待测试...")
+            print(f"步骤 1a: 导航到 CESU 批量页面...")
+            try:
+                await page.goto("https://www.cesu.ai/http_batch", timeout=60000, wait_until="domcontentloaded")
+            except Exception:
+                print("首次加载超时，尝试刷新...")
+                await page.reload()
 
-            # --- [代码优化] ---
-            # 1. 优化页面加载策略，仅等待DOM加载完成，不必等待所有资源
-            await page.goto("https://www.cesu.ai/http_batch", timeout=60000, wait_until="domcontentloaded")
-            print("页面基本结构加载完成。")
-
-            # 2. 显式等待核心交互元素加载完成，确保脚本稳定
-            print("步骤 1a: 等待核心交互元素加载...")
+            print("步骤 1b: 等待核心元素...")
             textarea = page.locator('textarea[name="host"]')
             submit_button = page.locator('span.action_submit[data-type="batch"]')
 
             await textarea.wait_for(state="visible", timeout=30000)
             await submit_button.wait_for(state="visible", timeout=30000)
-            print("核心交互元素加载成功，准备执行操作。")
 
-            # --- [优化结束] ---
-
+            # --- WebSocket 监听器 ---
             def handle_ws_message(ws):
                 nonlocal finish_count
 
@@ -183,9 +226,9 @@ async def run_cesu_test(target_urls: list, cookies: list = None):
                             data = json.loads(payload_str)
                             if isinstance(data, dict) and data.get("message") == "finish":
                                 finish_count += 1
-                                print(f"\n[CESU.AI] 检测到结束信号 ({finish_count}/{num_urls})。")
+                                print(f"\r[CESU] 进度: {finish_count}/{num_urls}", end="", flush=True)
                                 if finish_count >= num_urls:
-                                    print("\n[CESU.AI] 所有目标的测试均已完成！")
+                                    print("\n[CESU] 所有任务完成！")
                                     test_finished_event.set()
                         except (json.JSONDecodeError, TypeError):
                             pass
@@ -193,24 +236,27 @@ async def run_cesu_test(target_urls: list, cookies: list = None):
                 ws.on("framereceived", process_payload)
 
             page.on("websocket", handle_ws_message)
-            print("WebSocket 监听器已设置。")
 
-            print("步骤 2: 正在定位并填写测试URL...")
+            # --- 页面交互 ---
+            print("\n步骤 2: 填写 URL...")
             urls_to_test = "\n".join(target_urls)
-            await textarea.fill(urls_to_test)  # 使用之前定位好的元素
-            print(f"成功填写 {len(target_urls)} 个URL。")
+            await textarea.fill(urls_to_test)
 
-            print("步骤 3: 点击“批量检测”按钮并等待页面跳转...")
-            async with page.expect_navigation(wait_until="networkidle", timeout=60000):
-                await submit_button.click()  # 使用之前定位好的元素
-            print("页面跳转成功，测试已启动，正在等待所有任务完成信号...")
+            print("步骤 3: 点击测试...")
+            # 防止点击被浮层遮挡
+            await submit_button.click(force=True)
 
-            await asyncio.wait_for(test_finished_event.wait(), timeout=120 * num_urls)
+            # 动态等待时间：每个URL给足时间，防止过早超时
+            wait_timeout = 120 * num_urls
+            print(f"等待测试完成 (最大超时 {wait_timeout}秒)...")
 
-            print("\n步骤 4: 等待秒，确保前端完全渲染表格...")
-            await page.wait_for_timeout(2400)
+            await asyncio.wait_for(test_finished_event.wait(), timeout=wait_timeout)
 
-            print("\n步骤 5: 正在提取、拆分并结构化结果表格为JSON...")
+            print("\n步骤 4: 等待表格渲染缓冲 (2.5秒)...")
+            await page.wait_for_timeout(2500)
+
+            # --- 数据提取 ---
+            print("步骤 5: 提取清洗数据...")
             results = await page.evaluate('''() => {
                 const table = document.querySelector("table.table.table_cont");
                 if (!table) return null;
@@ -249,16 +295,18 @@ async def run_cesu_test(target_urls: list, cookies: list = None):
             if results:
                 final_results = json.dumps(results, indent=2, ensure_ascii=False)
             else:
-                print("错误：未能找到结果表格 table.table.table_cont。");
+                print("错误：未能找到结果表格 table.table.table_cont。")
 
         except Exception as e:
-            await page.screenshot(path="cesu_ai_error.png")
-            print(f"\n[CESU.AI] 操作页面时发生错误: {e}")
-            print("已保存截图到 cesu_ai_error.png 文件，请查看。")
+            print(f"\n[CESU] 发生错误: {e}")
+            if 'page' in locals():
+                await page.screenshot(path="cesu_error.png")
+                print("已保存错误截图 cesu_error.png")
         finally:
-            if 'browser' in locals() and browser.is_connected():
-                await browser.close()
-                print("\n[CESU.AI] 浏览器已关闭。")
+            # 持久化模式必须关闭 context
+            if 'context' in locals():
+                print("[CESU] 关闭浏览器上下文...")
+                await context.close()
 
     return final_results
 
@@ -267,7 +315,7 @@ async def run_cesu_test(target_urls: list, cookies: list = None):
 if __name__ == "__main__":
 
     ## 测试run_itdog_test
-    json_output = asyncio.run(run_itdog_test(target_host="1.1.1.1", custom_dns="119.29.29.29"))
+    json_output = asyncio.run(run_itdog_test(target_host="www.baidu.com", custom_dns="119.29.29.29"))
     if json_output:
         print(json_output)
     else:
