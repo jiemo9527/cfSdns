@@ -122,7 +122,7 @@ def get_cf_ips() -> Tuple[List[str], List[str], List[str]]:
     all_ct_ips.extend(ct_w)
     print(f"wetest.vip 获取完成。移动 {len(cm_w)}, 联通 {len(cu_w)}, 电信 {len(ct_w)} 个IP。")
 
-    # 从 cf.090227.xyz (每种最多取10个)
+    # 从 cf.090227.xyz 待修复
     cm_cf, cu_cf, ct_cf = extract_table_ips_from_html("https://cf.090227.xyz")
     all_cm_ips.extend(cm_cf[:10])
     all_cu_ips.extend(cu_cf[:10])
