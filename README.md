@@ -1,11 +1,10 @@
-# Test
-test分支引入了奇奇怪怪的数据源，加入了缓存域和自动删除记录功能（不一定是更好）。最低要求2.5核2.5G
+# 引入了奇奇怪怪的数据源，加入了缓存域和自动删除记录功能。最低要求2.5核2.5G
 
 ### docker-compose运行
 ```
 services:
   app:
-    image: wanxve0000/cfsdns:test
+    image: wanxve0000/cfsdns:latest
     environment:
       ALIYUN_ACCESS_KEY_ID: "ALIYUN_ACCESS_KEY_ID"
       ALIYUN_ACCESS_KEY_SECRET: "ALIYUN_ACCESS_KEY_SECRET"
@@ -39,14 +38,14 @@ python main.py
 ```
 docker run --rm \
   -d \
-  --name cfsdns-test \
+  --name cfsdns\
   -e ALIYUN_ACCESS_KEY_ID="请替换为您的AccessKeyID" \
   -e ALIYUN_ACCESS_KEY_SECRET="请替换为您的AccessKeySecret" \
   -e ALIYUN_PACKAGE_NUM="100" \
   -e domain_rr="www" \
   -e SLEEPTIME="480" \
   -e domain_root="domain.com" \
-  wanxve0000/cfsdns:test
+  wanxve0000/cfsdns:latest
 ```
 
 为什么从 **dnspod（腾讯）** 转到 **阿里云 DNS**？  
@@ -81,7 +80,7 @@ docker run --rm \
 
 
 
-### test分支运行12小时后效果图
+### latest分支运行12小时后效果图
 ![Snipaste_01.png](Snipaste_01.png)
 ![Snipaste_02.png](Snipaste_02.png)
 ### 感谢
