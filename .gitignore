@@ -1,0 +1,15 @@
+.idea/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+.env
+.env.*
+src/.env
+
+src/itdog_userdata/
+src/cesu_userdata/
+linux_error.png
+cesu_error.png
+.cfsdns_state.json
+.cfsdns.lock

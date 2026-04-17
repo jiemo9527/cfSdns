@@ -4,4 +4,4 @@ aliyun-python-sdk-alidns
 beautifulsoup4
 cloudscraper
 pycryptodome
-playwright
+playwright==1.58.0

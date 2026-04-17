@@ -3,16 +3,26 @@
 ### docker-compose运行
 ```
 services:
-  app:
+  cfsdns:
     image: wanxve0000/cfsdns:latest
+    restart: unless-stopped
+    shm_size: '2g'
     environment:
       ALIYUN_ACCESS_KEY_ID: "ALIYUN_ACCESS_KEY_ID"
       ALIYUN_ACCESS_KEY_SECRET: "ALIYUN_ACCESS_KEY_SECRET"
       ALIYUN_PACKAGE_NUM: "100"
-      SLEEPTIME: "480"
+      SLEEPTIME: "1800"
       domain_rr: "www"
       domain_root: "domain.com"
+      HEALTHCHECK_URL: "https://www.domain.com/health"
+      HEALTHCHECK_TIMEOUT_SECONDS: "10"
+      HEALTHCHECK_EXPECT_STATUS: "200"
 ```
+
+说明：Docker 镜像默认入口已统一为 `python -m src.main`。
+iStoreOS 常见的 `x86_64` 对应 Docker 平台 `linux/amd64`；当前镜像同时支持 `linux/amd64` 和 `linux/arm64`。
+当前推荐运行参数：`temp=20`、`floor=3`、`target=6`、`ceiling=8`，二测异常阈值为 `2.0s`。
+`domain_rr` 会保守维护生产池，并对超出 `ceiling` 的旧记录做逐轮温和收敛，不会一次性大规模清空。
 
 ### python运行
 ```
@@ -20,31 +30,42 @@ cat << EOF > .env
 # 阿里云 DNS 配置
 ALIYUN_ACCESS_KEY_ID="请在这里填入您的Access Key ID"
 ALIYUN_ACCESS_KEY_SECRET="请在这里填入您的Access Key Secret"
-ALIYUN_PACKAGE_NUM="100" #alidns套餐线路数上限
-SLEEPTIME="480" #任务休眠时间
+ALIYUN_PACKAGE_NUM="100" # alidns 套餐线路数上限
+SLEEPTIME="1800" # 任务休眠时间，推荐 30 分钟
 
 # 生效域名配置
 domain_rr="www"
 domain_root="domain.com"
+HEALTHCHECK_URL="https://www.domain.com/health"
+HEALTHCHECK_TIMEOUT_SECONDS="10"
+HEALTHCHECK_EXPECT_STATUS="200"
 EOF
 
 pip install -r requirements.txt
 playwright install-deps
 playwright install chromium
-python main.py
+python -m src.main
 ```
+
+说明：本地标准启动方式统一为在仓库根目录执行 `python -m src.main`。
+根目录 `.env` 是标准配置位置；代码仍兼容历史 `src/.env`，但根目录配置优先级更高。
 
 ### docker-cli运行
 ```
 docker run --rm \
   -d \
   --name cfsdns\
+  --restart unless-stopped \
+  --shm-size=2g \
   -e ALIYUN_ACCESS_KEY_ID="请替换为您的AccessKeyID" \
   -e ALIYUN_ACCESS_KEY_SECRET="请替换为您的AccessKeySecret" \
   -e ALIYUN_PACKAGE_NUM="100" \
   -e domain_rr="www" \
-  -e SLEEPTIME="480" \
+  -e SLEEPTIME="1800" \
   -e domain_root="domain.com" \
+  -e HEALTHCHECK_URL="https://www.domain.com/health" \
+  -e HEALTHCHECK_TIMEOUT_SECONDS="10" \
+  -e HEALTHCHECK_EXPECT_STATUS="200" \
   wanxve0000/cfsdns:latest
 ```
 
@@ -71,8 +92,10 @@ docker run --rm \
 
 #### 基于动态调整的资源优化
 
-- 当某条线路的 DNS 记录达到预设上限时，系统自动淘汰最早的记录，确保最新的优选 IP 能够及时生效。
-- 通过动态调整机制，持续优化网络性能，提升用户体验。
+- `temp` 作为内部测速池，会按本轮候选精确同步，不会无限累积历史记录。
+- `domain_rr` 作为对外生产解析，会按 `floor/target/ceiling` 保守维护，并对超出上限的旧记录做逐轮温和收敛。
+- 第二轮测速中，`状态=失败`、`总耗时>=2.0s`、以及 `解析失败` 等异常信号都会参与异常判断与冻结逻辑。
+- 通过动态调整机制，持续优化网络性能，同时避免因单轮波动造成大规模误删。
 
 
 ---

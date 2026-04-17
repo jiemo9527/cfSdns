@@ -1,170 +1,336 @@
+from __future__ import annotations
+
+if __name__ == "__main__" and (__package__ is None or __package__ == ""):
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    __package__ = "src"
+
+import ipaddress
+import logging
 import random
-
-import requests
 import re
-from typing import List, Tuple
-from bs4 import BeautifulSoup
+import socket
+from typing import List, Mapping, Tuple
+
 import cloudscraper
-from getv3data import v3data
+import requests
+from bs4 import BeautifulSoup
+
+from .getv3data import v3data
+from .logging_utils import configure_logging
+from .project_constants import (
+    EXCLUDED_IP_PREFIXES,
+    IP_SOURCE_URLS,
+    MAX_CANDIDATE_IPS_PER_CARRIER,
+    MAX_CF090227_IPS_PER_CARRIER,
+    PUBLIC_DOH_ENDPOINTS,
+)
 
 
+logger = logging.getLogger(__name__)
+IPV4_PATTERN = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
 
-# --- 2. IP提取函数 ---
 
-def extract_ips_from_api(url: str) -> Tuple[List[str], List[str], List[str]]:
-    """从API接口获取IP，并根据丢包率筛选。"""
-    local_cm, local_cu, local_ct = [], [], []
+def _is_public_ipv4(ip_address: str) -> bool:
+    if not IPV4_PATTERN.match(ip_address):
+        return False
+
     try:
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-    except Exception as e:
-        print(f"【错误】: 请求API '{url}' 时发生错误: {e}")
-        return [], [], []
+        return ipaddress.ip_address(ip_address).is_global
+    except ValueError:
+        return False
 
-    ip_data = data.get("data", {})
+
+def _filter_candidate_ips(ip_addresses: List[str]) -> List[str]:
+    filtered_ips = []
+    for ip_address in ip_addresses:
+        if not _is_public_ipv4(ip_address):
+            continue
+        if any(ip_address.startswith(prefix) for prefix in EXCLUDED_IP_PREFIXES):
+            continue
+        filtered_ips.append(ip_address)
+    return filtered_ips
+
+
+def _select_sample(ip_addresses: List[str], limit: int) -> List[str]:
+    unique_ips = sorted(set(_filter_candidate_ips(ip_addresses)))
+    if len(unique_ips) <= limit:
+        return unique_ips
+    return random.sample(unique_ips, limit)
+
+
+def _resolve_ipv4_records_via_doh(hostname: str) -> List[str]:
+    headers = {"accept": "application/dns-json"}
+
+    for endpoint in PUBLIC_DOH_ENDPOINTS:
+        try:
+            response = requests.get(
+                endpoint,
+                params={"name": hostname, "type": "A"},
+                headers=headers,
+                timeout=10,
+            )
+            response.raise_for_status()
+            response_json = response.json()
+            resolved_ips = [
+                answer.get("data", "")
+                for answer in response_json.get("Answer", [])
+                if answer.get("type") == 1 and _is_public_ipv4(answer.get("data", ""))
+            ]
+            if resolved_ips:
+                return sorted(set(resolved_ips))
+        except Exception as exc:
+            logger.warning("DoH 解析失败: host=%s endpoint=%s error=%s", hostname, endpoint, exc)
+
+    try:
+        resolved_ips = sorted(
+            {
+                str(result[4][0])
+                for result in socket.getaddrinfo(hostname, None, socket.AF_INET)
+                if _is_public_ipv4(str(result[4][0]))
+            }
+        )
+        return resolved_ips
+    except Exception as exc:
+        logger.warning("本机 DNS 解析失败: host=%s error=%s", hostname, exc)
+        return []
+
+
+def _extract_host_from_tcping_link(link: str | None) -> str | None:
+    marker = "/tcping/"
+    if not link:
+        return None
+    if marker not in link:
+        return None
+
+    host_port = link.split(marker, 1)[1]
+    if ":" in host_port:
+        return host_port.rsplit(":", 1)[0].strip()
+    return host_port.strip()
+
+
+def _get_cf090227_carriers(card_text: str) -> List[str]:
+    if "三网优选" in card_text:
+        return ["mobile", "unicom", "telecom"]
+
+    carriers = []
+    if "移动" in card_text:
+        carriers.append("mobile")
+    if "联通" in card_text:
+        carriers.append("unicom")
+    if "电信" in card_text:
+        carriers.append("telecom")
+
+    return carriers or ["mobile", "unicom", "telecom"]
+
+
+def classify_api_ip_data(data: Mapping[str, object]) -> Tuple[List[str], List[str], List[str]]:
+    local_cm, local_cu, local_ct = [], [], []
+    ip_data = data.get("data", {}) if isinstance(data, dict) else {}
+    if not isinstance(ip_data, dict):
+        return local_cm, local_cu, local_ct
+
     all_ips_info = {}
-    # 遍历API返回数据，并使用字典对IP进行去重
-    for provider_key, ips_list in ip_data.items():
-        if isinstance(ips_list, list):
-            for ip_info in ips_list:
-                if isinstance(ip_info, dict) and 'ip' in ip_info:
-                    all_ips_info[ip_info['ip']] = ip_info
+    for provider_ips in ip_data.values():
+        if not isinstance(provider_ips, list):
+            continue
+        for ip_info in provider_ips:
+            if isinstance(ip_info, dict) and "ip" in ip_info:
+                all_ips_info[ip_info["ip"]] = ip_info
 
-    # 根据不同运营商的丢包率将IP分配到对应列表
-    for ip, ip_info in all_ips_info.items():
-        if ip_info.get("ydPkgLostRateAvg", 100) < 3.5:  # 移动
-            local_cm.append(ip)
-        if ip_info.get("ltPkgLostRateAvg", 100) < 0.5:  # 联通
-            local_cu.append(ip)
-        if ip_info.get("dxPkgLostRateAvg", 100) < 3.5:  # 电信
-            local_ct.append(ip)
+    for ip_address, ip_info in all_ips_info.items():
+        if not _is_public_ipv4(ip_address):
+            continue
+        if ip_info.get("ydPkgLostRateAvg", 100) < 3.5:
+            local_cm.append(ip_address)
+        if ip_info.get("ltPkgLostRateAvg", 100) < 0.5:
+            local_cu.append(ip_address)
+        if ip_info.get("dxPkgLostRateAvg", 100) < 3.5:
+            local_ct.append(ip_address)
 
     return local_cm, local_cu, local_ct
 
 
+def parse_table_ips_from_html(html: str) -> Tuple[List[str], List[str], List[str]]:
+    cm_ips, cu_ips, ct_ips = [], [], []
+    soup = BeautifulSoup(html, "html.parser")
+    table = soup.find("table")
+    if not table:
+        return [], [], []
+
+    for row in table.find_all("tr"):
+        columns = row.find_all("td")
+        if len(columns) <= 1:
+            continue
+
+        carrier_name = columns[0].get_text(strip=True)
+        ip_address = columns[1].get_text(strip=True)
+        if not _is_public_ipv4(ip_address):
+            continue
+
+        if "移动" in carrier_name:
+            cm_ips.append(ip_address)
+        elif "联通" in carrier_name:
+            cu_ips.append(ip_address)
+        elif "电信" in carrier_name:
+            ct_ips.append(ip_address)
+
+    return cm_ips, cu_ips, ct_ips
+
+
+def parse_text_ips(text: str) -> List[str]:
+    return [ip.strip() for ip in text.split(",") if _is_public_ipv4(ip.strip())]
+
+
+def parse_cf090227_domain_cards(html: str) -> list[tuple[str, list[str]]]:
+    soup = BeautifulSoup(html, "html.parser")
+    parsed_cards = []
+
+    for card in soup.select(".domain-card"):
+        card_text = " ".join(card.get_text(" ", strip=True).split())
+        test_link = card.select_one(".test-link")
+        if not test_link:
+            continue
+
+        host = _extract_host_from_tcping_link(test_link.get("href", ""))
+        if not host:
+            continue
+
+        parsed_cards.append((host, _get_cf090227_carriers(card_text)))
+
+    return parsed_cards
+
+
+def extract_ips_from_api(url: str) -> Tuple[List[str], List[str], List[str]]:
+    """从 API 接口获取 IP，并根据丢包率筛选。"""
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+    except Exception as exc:
+        logger.warning("请求 API 失败: url=%s error=%s", url, exc)
+        return [], [], []
+
+    return classify_api_ip_data(data)
+
+
 def extract_table_ips_from_html(url: str) -> Tuple[List[str], List[str], List[str]]:
-    """从HTML页面的表格中提取IP，并按运营商分类。"""
+    """从 HTML 页面表格中提取 IP，并按运营商分类。"""
     cm_ips, cu_ips, ct_ips = [], [], []
     try:
         scraper = cloudscraper.create_scraper()
         response = scraper.get(url, timeout=10)
         response.raise_for_status()
-        soup = BeautifulSoup(response.text, 'html.parser')
-        table = soup.find('table')
-        if not table:
-            return [], [], []
-
-        # 遍历表格行，提取运营商名称和IP地址
-        for row in table.find_all('tr'):
-            cols = row.find_all('td')
-            if len(cols) > 1:
-                name = cols[0].text.strip()
-                ip = cols[1].text.strip()
-                # 验证IP格式
-                if re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', ip):
-                    # <<< 修改：只处理电信、联通、移动 >>>
-                    if "移动" in name:
-                        cm_ips.append(ip)
-                    elif "联通" in name:
-                        cu_ips.append(ip)
-                    elif "电信" in name:
-                        ct_ips.append(ip)
-    except Exception as e:
-        print(f"【错误】: 从URL '{url}' 提取表格数据失败: {e}")
+        return parse_table_ips_from_html(response.text)
+    except Exception as exc:
+        logger.warning("提取表格 IP 失败: url=%s error=%s", url, exc)
         return [], [], []
-    return cm_ips, cu_ips, ct_ips
 
 
 def extract_ips_from_text(url: str) -> Tuple[List[str], List[str], List[str]]:
-    """从纯文本页面提取以逗号分隔的IP地址。"""
+    """从纯文本页面提取逗号分隔的 IP 地址。"""
     try:
         scraper = cloudscraper.create_scraper()
         response = scraper.get(url, timeout=10)
         response.raise_for_status()
-        ip_text = response.text.strip()
-        # 切分文本并验证每个IP的格式
-        ip_list = [ip.strip() for ip in ip_text.split(',') if
-                   re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', ip.strip())]
+        ip_list = parse_text_ips(response.text)
         return ip_list, ip_list, ip_list
-    except Exception as e:
-        print(f"【错误】: 从URL '{url}' 提取文本IP失败: {e}")
+    except Exception as exc:
+        logger.warning("提取纯文本 IP 失败: url=%s error=%s", url, exc)
         return [], [], []
 
 
-# --- 3. 主处理函数 ---
+def extract_ips_from_cf090227(url: str) -> Tuple[List[str], List[str], List[str]]:
+    """从 cf.090227.xyz 的域名卡片中提取域名，并通过公共 DoH 解析出 A 记录。"""
+    carrier_ips = {"mobile": [], "unicom": [], "telecom": []}
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+    except Exception as exc:
+        logger.warning("请求 cf.090227.xyz 失败: url=%s error=%s", url, exc)
+        return [], [], []
+
+    for host, carriers in parse_cf090227_domain_cards(response.text):
+        resolved_ips = _resolve_ipv4_records_via_doh(host)
+        if not resolved_ips:
+            logger.info("cf.090227.xyz 域名未解析到公网 IPv4: host=%s", host)
+            continue
+
+        for carrier in carriers:
+            carrier_ips[carrier].extend(resolved_ips)
+
+    return (
+        _select_sample(carrier_ips["mobile"], MAX_CF090227_IPS_PER_CARRIER),
+        _select_sample(carrier_ips["unicom"], MAX_CF090227_IPS_PER_CARRIER),
+        _select_sample(carrier_ips["telecom"], MAX_CF090227_IPS_PER_CARRIER),
+    )
+
+
 def get_cf_ips() -> Tuple[List[str], List[str], List[str]]:
-    """执行获取、合并和处理Cloudflare IP的完整流程。"""
+    """执行获取、合并和处理 Cloudflare IP 的完整流程。"""
     all_cm_ips, all_cu_ips, all_ct_ips = [], [], []
 
-    # 步骤 2: 从v3data获取IP
     try:
-        cm_ip_v3, cu_ip_v3, ct_ip_v3 = v3data()
+        v3data_result = v3data()
+        if not v3data_result:
+            raise ValueError("v3data 未返回可用结果")
+
+        cm_ip_v3, cu_ip_v3, ct_ip_v3 = v3data_result
         all_cm_ips.extend(cm_ip_v3)
         all_cu_ips.extend(cu_ip_v3)
         all_ct_ips.extend(ct_ip_v3)
-        print(f"v3data 获取完成。移动 {len(cm_ip_v3)}, 联通 {len(cu_ip_v3)}, 电信 {len(ct_ip_v3)} 个IP。")
-    except Exception as e:
-        print(f"【错误】: 执行 v3data() 时发生意外: {e}。")
+        logger.info(
+            "v3data 获取完成。移动 %s, 联通 %s, 电信 %s 个IP。",
+            len(cm_ip_v3),
+            len(cu_ip_v3),
+            len(ct_ip_v3),
+        )
+    except Exception as exc:
+        logger.warning("执行 v3data() 失败: %s", exc)
 
-    # 步骤 3: 从其他来源获取IP
-    # 从 api.uouin.com
-    cm_u, cu_u, ct_u = extract_table_ips_from_html("https://api.uouin.com/cloudflare.html")
-    all_cm_ips.extend(cm_u)
-    all_cu_ips.extend(cu_u)
-    all_ct_ips.extend(ct_u)
-    print(f"api.uouin.com 获取完成。移动 {len(cm_u)}, 联通 {len(cu_u)}, 电信 {len(ct_u)} 个IP。")
+    source_extractors = [
+        ("api.uouin.com", lambda: extract_table_ips_from_html(IP_SOURCE_URLS["uouin"])),
+        ("wetest.vip", lambda: extract_table_ips_from_html(IP_SOURCE_URLS["wetest"])),
+        ("cf.090227.xyz", lambda: extract_ips_from_cf090227(IP_SOURCE_URLS["cf090227"])),
+        ("ip.164746.xyz", lambda: extract_ips_from_text(IP_SOURCE_URLS["ip164746"])),
+    ]
 
-    # 从 wetest.vip
-    cm_w, cu_w, ct_w = extract_table_ips_from_html("https://www.wetest.vip/page/cloudflare/address_v4.html")
-    all_cm_ips.extend(cm_w)
-    all_cu_ips.extend(cu_w)
-    all_ct_ips.extend(ct_w)
-    print(f"wetest.vip 获取完成。移动 {len(cm_w)}, 联通 {len(cu_w)}, 电信 {len(ct_w)} 个IP。")
+    for source_name, extractor in source_extractors:
+        cm_ips, cu_ips, ct_ips = extractor()
+        all_cm_ips.extend(cm_ips)
+        all_cu_ips.extend(cu_ips)
+        all_ct_ips.extend(ct_ips)
+        if source_name == "ip.164746.xyz":
+            logger.info("%s 获取完成。共 %s 个IP。", source_name, len(cm_ips))
+        else:
+            logger.info(
+                "%s 获取完成。移动 %s, 联通 %s, 电信 %s 个IP。",
+                source_name,
+                len(cm_ips),
+                len(cu_ips),
+                len(ct_ips),
+            )
 
-    # 从 cf.090227.xyz 待修复
-    cm_cf, cu_cf, ct_cf = extract_table_ips_from_html("https://cf.090227.xyz")
-    all_cm_ips.extend(cm_cf[:10])
-    all_cu_ips.extend(cu_cf[:10])
-    all_ct_ips.extend(ct_cf[:10])
-    print(f"cf.090227.xyz 获取完成。移动 {len(cm_cf)}, 联通 {len(cu_cf)}, 电信 {len(ct_cf)} 个IP")
+    final_ct_ip = _select_sample(all_ct_ips, MAX_CANDIDATE_IPS_PER_CARRIER)
+    final_cm_ip = _select_sample(all_cm_ips, MAX_CANDIDATE_IPS_PER_CARRIER)
+    final_cu_ip = _select_sample(all_cu_ips, MAX_CANDIDATE_IPS_PER_CARRIER)
 
-    # 从 ip.164746.xyz
-    cm_16, cu_16, ct_16 = extract_ips_from_text("https://ip.164746.xyz/ipTop10.html")
-    all_cm_ips.extend(cm_16)
-    all_cu_ips.extend(cu_16)
-    all_ct_ips.extend(ct_16)
-    print(f"ip.164746.xyz 获取完成。共 {len(cm_16)} 个IP。")
-
-    # 步骤 4: 列表去重和排序
-
-    final_ct_ip = sorted(list(set(all_ct_ips)))
-    final_cm_ip = sorted(list(set(all_cm_ips)))
-    final_cu_ip = sorted(list(set(all_cu_ips)))
-
-    # 步骤 5: 剔除指定网段的IP
-    print("\n剔除 172.65.*.* 网段的IP.")
-    final_ct_ip_filtered = [ip for ip in final_ct_ip if not ip.startswith("172.65.")]
-    final_cm_ip_filtered = [ip for ip in final_cm_ip if not ip.startswith("172.65.")]
-    final_cu_ip_filtered = [ip for ip in final_cu_ip if not ip.startswith("172.65.")]
-
-    # 步骤 6: 限制每个列表的IP数量
-    final_ct_ip_limited = random.sample(final_ct_ip_filtered, min(19, len(final_ct_ip_filtered)))
-    final_cm_ip_limited = random.sample(final_cm_ip_filtered, min(19, len(final_cm_ip_filtered)))
-    final_cu_ip_limited = random.sample(final_cu_ip_filtered, min(19, len(final_cu_ip_filtered)))
-
-    print(
-        f"处理后：电信 {len(final_ct_ip_limited)} 个, 移动 {len(final_cm_ip_limited)} 个, 联通 {len(final_cu_ip_limited)} 个。")
-    print("\n#########################IP获取任务执行完毕#########################")
-    return final_ct_ip_limited, final_cm_ip_limited, final_cu_ip_limited
+    logger.info(
+        "处理后：电信 %s 个, 移动 %s 个, 联通 %s 个。",
+        len(final_ct_ip),
+        len(final_cm_ip),
+        len(final_cu_ip),
+    )
+    logger.info("IP 获取任务执行完毕。")
+    return final_ct_ip, final_cm_ip, final_cu_ip
 
 
-# --- 4. 主程序入口 ---
-if __name__ == '__main__':
-    # 执行主函数并获取处理后的IP列表
+if __name__ == "__main__":
+    configure_logging(format_string="%(asctime)s - %(levelname)s - [IPSource] - %(message)s")
     ct_ip, cm_ip, cu_ip = get_cf_ips()
-    # 打印最终结果
-    print("\n--- 最终获取到的IP列表 (已剔除 172.65.*.*) ---")
-    print(f"电信IP ({len(ct_ip)}个): {ct_ip}")
-    print(f"移动IP ({len(cm_ip)}个): {cm_ip}")
-    print(f"联通IP ({len(cu_ip)}个): {cu_ip}")
+    logger.info("最终获取到的 IP 列表：")
+    logger.info("电信IP (%s个): %s", len(ct_ip), ct_ip)
+    logger.info("移动IP (%s个): %s", len(cm_ip), cm_ip)
+    logger.info("联通IP (%s个): %s", len(cu_ip), cu_ip)

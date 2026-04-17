@@ -1,206 +1,283 @@
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+
+if __name__ == "__main__" and (__package__ is None or __package__ == ""):
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    __package__ = "src"
+
 import asyncio
-import os
-import random
+import logging
 import sys
 from time import sleep
 
-from dotenv import load_dotenv
-import getIPFromW3
-import webTestUnion
-import cf2alidns
-import logging
-import json
-
-load_dotenv()
-
-# 从环境变量加载配置
-domain_rr = os.getenv('domain_rr')
-domain_root = os.getenv('domain_root')
-temp_subdomain = 'temp'
-
-
-def filter_and_select_ips(json_string: str, count_per_carrier: int) -> dict:
-    """
-    从IT-Dog的JSON测试结果中为每个运营商分别筛选IP。
-    """
-    if not json_string:
-        return {}
-    try:
-        results = json.loads(json_string)
-    except json.JSONDecodeError:
-        logging.error("解析测速结果JSON时出错。")
-        return {}
-    qualified_ips = {"mobile": [], "unicom": [], "telecom": []}
-    for item in results:
-        detection_point = item.get("检测点", "")
-        status = item.get("状态", "")
-        total_time_str = item.get("总耗时", "")
-        ip_address = item.get("响应IP", "")
-        if not ip_address or ip_address == "解析失败" or status != "530":
-            continue
-        is_time_ok = False
-        if isinstance(total_time_str, str) and total_time_str.endswith('s'):
-            try:
-                time_val = float(total_time_str[:-1])
-                if time_val < 1.0:
-                    is_time_ok = True
-            except (ValueError, TypeError):
-                continue
-        if is_time_ok:
-            if detection_point.startswith("移动"):
-                qualified_ips["mobile"].append(ip_address)
-            elif detection_point.startswith("联通"):
-                qualified_ips["unicom"].append(ip_address)
-            elif detection_point.startswith("电信"):
-                qualified_ips["telecom"].append(ip_address)
-    final_selection = {}
-    for carrier, ips in qualified_ips.items():
-        unique_ips = sorted(list(set(ips)))
-        if len(unique_ips) > count_per_carrier:
-            selected = random.sample(unique_ips, count_per_carrier)
-        else:
-            selected = unique_ips
-        final_selection[carrier] = selected
-    return final_selection
+from . import cf2alidns, getIPFromW3, webTestUnion
+from .healthcheck import log_healthcheck_result, run_healthcheck
+from .logging_utils import configure_logging
+from .process_lock import SingleInstanceLock
+from .project_config import RuntimeConfig, load_runtime_config
+from .project_constants import (
+    CARRIER_DISPLAY_NAMES,
+    CONSECUTIVE_ANOMALY_DELETE_THRESHOLD,
+    MAX_SURPLUS_PRUNE_PER_LINE_PER_CYCLE,
+    MIN_RECOMMENDED_SLEEP_SECONDS,
+    PRODUCTION_RECORD_CEILING,
+    PRODUCTION_RECORD_FLOOR,
+    PRODUCTION_RECORD_TARGET,
+    RECOMMENDED_SLEEP_SECONDS,
+)
+from .runtime_state import (
+    RuntimeState,
+    clear_record_state,
+    increment_record_anomaly_streak,
+    load_runtime_state,
+    mark_record_healthy,
+    save_runtime_state,
+)
+from .workflow_rules import (
+    ValidationSummary,
+    filter_and_select_ips,
+    should_freeze_production_deletions,
+    summarize_validation_results,
+)
 
 
-def main():
-    """
-    主函数，用于执行从获取Cloudflare IP到更新阿里云DNS的完整流程。
-    """
-    logging.info("@@@@@ 开始一次完整的IP筛选与更新任务 @@@@@")
+logger = logging.getLogger(__name__)
 
-    # 准备工作：为确保环境干净，先删除 temp 子域名的所有记录
-    # 步骤1：获取IP源
-    logging.info("步骤1：开始从所有来源获取IP...")
-    ct_ip, cm_ip, cu_ip = getIPFromW3.get_cf_ips()
-    logging.info(f"IP获取完成。移动: {len(cm_ip)}, 联通: {len(cu_ip)}, 电信: {len(ct_ip)}")
 
-    # 步骤2：更新临时域名并进行第一次测速
-    logging.info(f"步骤2：正在将IP更新到临时域名 {temp_subdomain}.{domain_root} 以进行测速...")
-    # 【关键修改】将IP列表打包成字典
-    initial_ips_dict = {
-        'mobile': cm_ip,
-        'unicom': cu_ip,
-        'telecom': ct_ip
-    }
-    # 使用正确的参数名 ips_by_carrier 调用函数
-    cf2alidns.update_aliyun_dns_records(domain_rr=temp_subdomain, domain_root=domain_root,
-                                        ips_by_carrier=initial_ips_dict)
-
-    json_temp = asyncio.run(
-        webTestUnion.run_itdog_test(target_host=f"{temp_subdomain}.{domain_root}", custom_dns="119.29.29.29"))
-    if not json_temp:
-        logging.error("第一次IT-Dog测速失败，程序中止。")
-        return
-
-    # 步骤3：筛选优质IP
-    logging.info("步骤3：第一次测速完成，开始筛选优质IP...")
-    selected_ips_by_carrier = filter_and_select_ips(json_temp, 5)
-
-    if not any(selected_ips_by_carrier.values()):
-        logging.warning("未能从第一次测速结果中筛选出任何符合条件的IP，程序中止。")
-        return
-
-    logging.info("成功筛选出各线路的随机优质IP:")
+def log_selected_ips(selected_ips_by_carrier: dict[str, list[str]]) -> None:
+    logger.info("成功筛选出各线路的优质 IP：")
     for carrier, ips in selected_ips_by_carrier.items():
-        carrier_name_cn = {"mobile": "移动", "unicom": "联通", "telecom": "电信"}
-        print(f"--- {carrier_name_cn[carrier]} ({len(ips)}个) ---")
-        print(ips)
-
-    # 步骤4：更新生产域名
-    logging.info(f"步骤4：正在将筛选出的优质IP更新到生产域名 {domain_rr}.{domain_root} ...")
-    # 【关键修改】直接传递筛选结果的字典
-    cf2alidns.update_aliyun_dns_records(domain_rr=domain_rr, domain_root=domain_root,
-                                        ips_by_carrier=selected_ips_by_carrier)
-    logging.info("生产域名DNS更新完成。")
-
-    # 步骤5：第二次测速（验证）并剔除不良记录
-
-    json_validate = asyncio.run(
-        webTestUnion.run_itdog_test(target_host=f"{domain_rr}.{domain_root}", custom_dns="119.29.29.29"))
-    if json_validate:
-        logging.info("最终验证测速完成，开始检查并删除不良DNS记录...")
-        try:
-            results = json.loads(json_validate)
-            records_to_delete = []
-            carrier_map = {"电信": "telecom", "移动": "mobile", "联通": "unicom"}
-
-            for item in results:
-                status = item.get("状态", "")
-                total_time_str = item.get("总耗时", "")
-                ip_address = item.get("响应IP")
-                detection_point = item.get("检测点", "")
-
-                if not ip_address or ip_address == "解析失败":
-                    continue
-
-                should_delete = False
-                if status == "失败":
-                    should_delete = True
-                if not should_delete and isinstance(total_time_str, str) and total_time_str.endswith('s'):
-                    try:
-                        time_val = float(total_time_str[:-1])
-                        if time_val >= 8.0:
-                            should_delete = True
-                    except (ValueError, TypeError):
-                        pass
-
-                if should_delete:
-                    for cn_name, line_name in carrier_map.items():
-                        if detection_point.startswith(cn_name):
-                            records_to_delete.append({'ip': ip_address, 'line': line_name})
-                            logging.info(
-                                f"标记待删除记录: IP={ip_address}, Line={line_name}, 原因: 状态='{status}', 耗时='{total_time_str}'")
-                            break
-
-            if records_to_delete:
-                unique_records_to_delete = [dict(t) for t in {tuple(d.items()) for d in records_to_delete}]
-                total_to_delete = len(unique_records_to_delete)
-                logging.info(f"共找到 {total_to_delete} 条唯一的不良记录需要删除。")
-
-                records_to_process = unique_records_to_delete
-                # 如果待删除记录超过10条，则只处理前5条
-                if total_to_delete > 10:
-                    logging.warning(f"待删除记录超过10条，将只处理前5条。")
-                    records_to_process = unique_records_to_delete[:5]
-
-                for record in records_to_process:
-                    cf2alidns.delete_record_by_value(
-                        domain_name=domain_root,
-                        rr=domain_rr,
-                        value=record['ip'],
-                        line=record['line']
-                    )
-            else:
-                logging.info("最终验证测试结果良好，没有需要删除的DNS记录。")
-        except json.JSONDecodeError:
-            logging.error("解析第二次测速结果的JSON时出错。")
-    else:
-        logging.warning("第二次验证测速失败，无法执行剔除操作。")
-
-    logging.info("@@@@@ 本次任务全部执行完毕 @@@@@")
-    print("--- over over!!! ---")
+        logger.info("%s (%s 个): %s", CARRIER_DISPLAY_NAMES[carrier], len(ips), ips)
 
 
-if __name__ == '__main__':
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - [Main] - %(message)s'
+def run_itdog_test(target_host: str, custom_dns: str) -> str | None:
+    return asyncio.run(webTestUnion.run_itdog_test(target_host=target_host, custom_dns=custom_dns))
+
+
+def log_sleep_time_guidance(config: RuntimeConfig) -> None:
+    if config.sleep_time < MIN_RECOMMENDED_SLEEP_SECONDS:
+        logger.warning(
+            "当前 SLEEPTIME=%s 秒偏低，建议生产环境至少 %s 秒，推荐 %s 秒。",
+            config.sleep_time,
+            MIN_RECOMMENDED_SLEEP_SECONDS,
+            RECOMMENDED_SLEEP_SECONDS,
+        )
+
+
+def log_healthcheck_guidance(config: RuntimeConfig) -> None:
+    if config.healthcheck_url:
+        logger.info(
+            "已启用站点健康检查冻结条件: url=%s expected_status=%s timeout=%ss",
+            config.healthcheck_url,
+            config.healthcheck_expected_status,
+            config.healthcheck_timeout_seconds,
+        )
+        return
+
+    logger.warning("未配置 HEALTHCHECK_URL；发生疑似源站异常时，只能依赖结果特征冻结删除。")
+
+
+def _count_records_by_line(records: list[dict[str, object]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for record in records:
+        line_key = str(record.get("Line", "")).lower()
+        if not line_key:
+            continue
+        counts[line_key] = counts.get(line_key, 0) + 1
+    return counts
+
+
+def _apply_validation_state(config: RuntimeConfig, state: RuntimeState, summary: ValidationSummary) -> list[dict[str, str]]:
+    for ip_address, line_name in summary.healthy_records:
+        mark_record_healthy(state, config.domain_rr, line_name, ip_address)
+
+    deletion_candidates = []
+    for ip_address, line_name in sorted(summary.anomalous_records):
+        streak = increment_record_anomaly_streak(state, config.domain_rr, line_name, ip_address)
+        logger.info("生产记录异常累计: ip=%s line=%s streak=%s", ip_address, line_name, streak)
+        if streak >= CONSECUTIVE_ANOMALY_DELETE_THRESHOLD:
+            deletion_candidates.append({"ip": ip_address, "line": line_name})
+
+    return deletion_candidates
+
+
+def _filter_deletions_by_floor(config: RuntimeConfig, deletion_candidates: list[dict[str, str]]) -> list[dict[str, str]]:
+    existing_records = cf2alidns.query_all_domain_records(config.domain_root, subdomain=config.domain_rr)
+    line_counts = _count_records_by_line(existing_records)
+    allowed_deletions = []
+
+    for candidate in deletion_candidates:
+        line_key = candidate["line"].lower()
+        remaining_count = line_counts.get(line_key, 0)
+        if remaining_count <= PRODUCTION_RECORD_FLOOR:
+            logger.warning(
+                "跳过删除以保护生产池下限: ip=%s line=%s current=%s floor=%s",
+                candidate["ip"],
+                candidate["line"],
+                remaining_count,
+                PRODUCTION_RECORD_FLOOR,
+            )
+            continue
+
+        allowed_deletions.append(candidate)
+        line_counts[line_key] = remaining_count - 1
+
+    return allowed_deletions
+
+
+def _should_freeze_for_source_healthcheck(config: RuntimeConfig, has_anomalies: bool) -> bool:
+    if not has_anomalies or not config.healthcheck_url:
+        return False
+
+    result = run_healthcheck(
+        url=config.healthcheck_url,
+        timeout_seconds=config.healthcheck_timeout_seconds,
+        expected_status=config.healthcheck_expected_status,
+    )
+    log_healthcheck_result(result, config.healthcheck_expected_status)
+    return not result.ok
+
+
+def _prune_surplus_production_records(config: RuntimeConfig, state: RuntimeState, selected_ips_by_carrier: dict[str, list[str]]) -> None:
+    pruned_records = cf2alidns.prune_production_dns_records(
+        domain_rr=config.domain_rr,
+        domain_root=config.domain_root,
+        preferred_ips_by_carrier=selected_ips_by_carrier,
+        floor_count=PRODUCTION_RECORD_FLOOR,
+        ceiling_count=PRODUCTION_RECORD_CEILING,
+        max_prune_per_line=MAX_SURPLUS_PRUNE_PER_LINE_PER_CYCLE,
+    )
+    for record in pruned_records:
+        clear_record_state(state, config.domain_rr, record["line"], record["ip"])
+
+
+def run_single_cycle(config: RuntimeConfig, state: RuntimeState) -> None:
+    logger.info("@@@@@ 开始一次完整的 IP 筛选与更新任务 @@@@@")
+
+    logger.info("步骤1：开始从所有来源获取 IP...")
+    ct_ip, cm_ip, cu_ip = getIPFromW3.get_cf_ips()
+    logger.info("IP 获取完成。移动: %s, 联通: %s, 电信: %s", len(cm_ip), len(cu_ip), len(ct_ip))
+
+    logger.info("步骤2：更新临时域名并进行第一次测速: %s.%s", config.temp_subdomain, config.domain_root)
+    initial_ips_dict = {
+        "mobile": cm_ip,
+        "unicom": cu_ip,
+        "telecom": ct_ip,
+    }
+    cf2alidns.sync_aliyun_dns_records_exact(
+        domain_rr=config.temp_subdomain,
+        domain_root=config.domain_root,
+        ips_by_carrier=initial_ips_dict,
     )
 
-    # 想法很多，目前只实现了一条路径。fromBc未添加
-    try:
-        while True:
-            try:
-                main()
-            except Exception as e:
-                logging.error(f"任务执行周期中发生错误: {e}", exc_info=True)
-            logging.info("本轮任务结束，休眠...")
-            sleep(int(os.getenv('SLEEPTIME')))
+    json_temp = run_itdog_test(target_host=f"{config.temp_subdomain}.{config.domain_root}", custom_dns=config.custom_dns)
+    if not json_temp:
+        logger.error("第一次 IT-Dog 测速失败，程序中止。")
+        return
 
-    except KeyboardInterrupt:
-        # 允许用户通过 Ctrl+C停止程序
-        logging.info("接收到停止信号 (Ctrl+C)，程序正在退出。")
-        sys.exit(0)
+    logger.info("步骤3：第一次测速完成，开始筛选优质 IP...")
+    selected_ips_by_carrier = filter_and_select_ips(json_temp)
+    if not any(selected_ips_by_carrier.values()):
+        logger.warning("未能从第一次测速结果中筛选出任何符合条件的 IP，程序中止。")
+        return
+
+    log_selected_ips(selected_ips_by_carrier)
+
+    logger.info("步骤4：更新生产域名: %s.%s", config.domain_rr, config.domain_root)
+    cf2alidns.ensure_production_dns_records(
+        domain_rr=config.domain_rr,
+        domain_root=config.domain_root,
+        ips_by_carrier=selected_ips_by_carrier,
+        floor_count=PRODUCTION_RECORD_FLOOR,
+        target_count=PRODUCTION_RECORD_TARGET,
+        ceiling_count=PRODUCTION_RECORD_CEILING,
+    )
+
+    logger.info("步骤5：执行第二次测速并剔除不良记录...")
+    json_validate = run_itdog_test(target_host=f"{config.domain_rr}.{config.domain_root}", custom_dns=config.custom_dns)
+    if not json_validate:
+        logger.warning("第二次验证测速失败，无法执行剔除操作。")
+        return
+
+    summary = summarize_validation_results(json_validate)
+    if summary is None:
+        logger.warning("无法解析第二次测速结果，跳过状态更新与删除。")
+        return
+
+    if should_freeze_production_deletions(summary):
+        logger.warning(
+            "检测到疑似全局异常，冻结本轮生产删除: total_points=%s healthy_points=%s anomalous_points=%s lines_seen=%s",
+            summary.total_points,
+            summary.healthy_points,
+            summary.anomalous_points,
+            sorted(summary.lines_seen),
+        )
+        return
+
+    if _should_freeze_for_source_healthcheck(config, has_anomalies=bool(summary.anomalous_records)):
+        return
+
+    records_to_delete = _apply_validation_state(config, state, summary)
+    if not records_to_delete:
+        logger.info("最终验证测试结果良好，没有需要删除的 DNS 记录。")
+    else:
+        records_to_delete = _filter_deletions_by_floor(config, records_to_delete)
+        logger.info("共找到 %s 条达到删除阈值的 DNS 记录。", len(records_to_delete))
+        for record in records_to_delete:
+            logger.info("标记待删除记录: ip=%s line=%s", record["ip"], record["line"])
+            cf2alidns.delete_record_by_value(
+                domain_name=config.domain_root,
+                rr=config.domain_rr,
+                value=record["ip"],
+                line=record["line"],
+            )
+            clear_record_state(state, config.domain_rr, record["line"], record["ip"])
+
+    _prune_surplus_production_records(config, state, selected_ips_by_carrier)
+
+    save_runtime_state(state)
+
+    logger.info("@@@@@ 本次任务全部执行完毕 @@@@@")
+
+
+def main() -> int:
+    configure_logging(format_string="%(asctime)s - %(levelname)s - [Main] - %(message)s")
+
+    try:
+        runtime_config = load_runtime_config()
+    except ValueError as exc:
+        logger.error("启动失败: %s", exc)
+        return 1
+
+    runtime_state = load_runtime_state()
+    log_sleep_time_guidance(runtime_config)
+    log_healthcheck_guidance(runtime_config)
+    instance_lock = SingleInstanceLock()
+    if not instance_lock.acquire():
+        logger.error("检测到已有实例正在运行，本次启动将退出。")
+        return 1
+
+    try:
+        try:
+            while True:
+                try:
+                    run_single_cycle(runtime_config, runtime_state)
+                except Exception as exc:
+                    logger.error("任务执行周期中发生错误: %s", exc, exc_info=True)
+                    save_runtime_state(runtime_state)
+
+                logger.info("本轮任务结束，休眠 %s 秒...", runtime_config.sleep_time)
+                sleep(runtime_config.sleep_time)
+        except KeyboardInterrupt:
+            logger.info("接收到停止信号 (Ctrl+C)，程序正在退出。")
+            return 0
+    finally:
+        save_runtime_state(runtime_state)
+        instance_lock.release()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

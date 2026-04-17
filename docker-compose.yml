@@ -1,13 +1,26 @@
 services:
   cfsdns:
     build: .
-    image: wanxve0000/cfsdns:test
+    image: wanxve0000/cfsdns:latest
+    container_name: cfsdns
     shm_size: '2g'
+    restart: unless-stopped
+    init: true
     environment:
       ALIYUN_ACCESS_KEY_ID: "ALIYUN_ACCESS_KEY_ID"
       ALIYUN_ACCESS_KEY_SECRET: "ALIYUN_ACCESS_KEY_SECRET"
       ALIYUN_PACKAGE_NUM: "100"
-      SLEEPTIME: "480"
+      SLEEPTIME: "1800"
       domain_rr: "www"
-      domain_root: "domian.com"
-    tty: true
+      domain_root: "domain.com"
+      HEALTHCHECK_URL: "https://www.domain.com/health"
+      HEALTHCHECK_TIMEOUT_SECONDS: "10"
+      HEALTHCHECK_EXPECT_STATUS: "200"
+    volumes:
+      - ./data/itdog_userdata:/app/src/itdog_userdata
+      - ./data/cesu_userdata:/app/src/cesu_userdata
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
