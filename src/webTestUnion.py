@@ -5,6 +5,8 @@ import json
 import logging
 import os
 import platform
+import shutil
+import tempfile
 
 from playwright.async_api import async_playwright
 
@@ -26,6 +28,9 @@ PLAYWRIGHT_VIEWPORT = {"width": 1920, "height": 1080}
 ANTI_BOT_INIT_SCRIPT = """
     Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
 """
+ITDOG_MAX_ATTEMPTS = 3
+ITDOG_RETRY_DELAY_SECONDS = 3
+ITDOG_PAGE_OPEN_ATTEMPTS = 2
 
 
 def _get_user_data_dir(dirname: str) -> str:
@@ -42,6 +47,38 @@ async def _launch_persistent_context(playwright, user_data_dir: str):
         ignore_default_args=PLAYWRIGHT_IGNORE_ARGS,
         viewport=PLAYWRIGHT_VIEWPORT,
     )
+
+
+def _cleanup_chromium_singleton_files(user_data_dir: str) -> None:
+    for filename in ("SingletonLock", "SingletonSocket", "SingletonCookie"):
+        file_path = os.path.join(user_data_dir, filename)
+        if not os.path.lexists(file_path):
+            continue
+
+        try:
+            os.remove(file_path)
+            logger.info("已清理 Chromium 单例锁文件: %s", file_path)
+        except Exception as exc:
+            logger.warning("清理 Chromium 单例锁文件失败: path=%s error=%s", file_path, exc)
+
+
+def _prepare_itdog_user_data_dir(base_user_data_dir: str, attempt_index: int) -> tuple[str, bool]:
+    if attempt_index == 1:
+        return base_user_data_dir, False
+
+    temporary_dir = tempfile.mkdtemp(prefix="itdog-retry-", dir=os.path.dirname(base_user_data_dir))
+    logger.info("IT-Dog 重试将使用临时用户目录: attempt=%s dir=%s", attempt_index, temporary_dir)
+    return temporary_dir, True
+
+
+def _cleanup_temporary_user_data_dir(user_data_dir: str, should_cleanup: bool) -> None:
+    if not should_cleanup:
+        return
+
+    try:
+        shutil.rmtree(user_data_dir, ignore_errors=True)
+    except Exception as exc:
+        logger.warning("清理临时用户目录失败: dir=%s error=%s", user_data_dir, exc)
 
 
 async def _save_debug_screenshot(page, screenshot_path: str, label: str) -> None:
@@ -101,6 +138,34 @@ def _register_cesu_finish_listener(page, test_finished_event: asyncio.Event, num
         ws.on("framereceived", process_payload)
 
     page.on("websocket", handle_ws_message)
+
+
+async def _create_itdog_page(context, test_finished_event: asyncio.Event):
+    page = await context.new_page()
+    _register_itdog_finish_listener(page, test_finished_event)
+    return page
+
+
+async def _open_itdog_page(context, test_finished_event: asyncio.Event):
+    last_exception = None
+
+    for attempt_index in range(1, ITDOG_PAGE_OPEN_ATTEMPTS + 1):
+        page = await _create_itdog_page(context, test_finished_event)
+        try:
+            logger.info("打开 IT-Dog 页面: attempt=%s/%s", attempt_index, ITDOG_PAGE_OPEN_ATTEMPTS)
+            await page.goto(ITDOG_URL, timeout=60000, wait_until="domcontentloaded")
+            return page
+        except Exception as exc:
+            last_exception = exc
+            logger.warning("加载 IT-Dog 页面失败: attempt=%s/%s error=%s", attempt_index, ITDOG_PAGE_OPEN_ATTEMPTS, exc)
+            try:
+                await page.close()
+            except Exception:
+                pass
+
+    if last_exception is not None:
+        raise last_exception
+    raise RuntimeError("打开 IT-Dog 页面失败")
 
 
 async def _extract_itdog_results(page) -> str | None:
@@ -178,51 +243,72 @@ async def _extract_cesu_results(page) -> str | None:
     return json.dumps(results, indent=2, ensure_ascii=False)
 
 
+async def _run_itdog_workflow(page, test_finished_event: asyncio.Event, target_host: str, custom_dns: str) -> str | None:
+    logger.info("填写 IT-Dog 目标域名: %s", target_host)
+    await page.wait_for_timeout(1500)
+    await page.get_by_placeholder("例：example.com").fill(target_host)
+
+    logger.info("设置 IT-Dog 自定义 DNS: %s", custom_dns)
+    await page.get_by_role("button", name="高级选项").click()
+    await page.locator('input[name="dns_server_type"][value="custom"]').check(force=True)
+    await page.locator("#dns_server").fill(custom_dns)
+
+    logger.info("开始执行 IT-Dog 快速测试...")
+    await page.get_by_role("button", name="快速测试").click()
+
+    logger.info("等待 IT-Dog 结果，最大 60 秒...")
+    await asyncio.wait_for(test_finished_event.wait(), timeout=60)
+    return await _extract_itdog_results(page)
+
+
 async def run_itdog_test(target_host: str, custom_dns: str):
     """执行 IT-Dog 自动测速。"""
-    user_data_dir = _get_user_data_dir("itdog_userdata")
-    test_finished_event = asyncio.Event()
-    final_results = None
+    base_user_data_dir = _get_user_data_dir("itdog_userdata")
 
     async with async_playwright() as playwright:
-        context = None
-        page = None
-        try:
-            context = await _launch_persistent_context(playwright, user_data_dir)
-            await context.add_init_script(ANTI_BOT_INIT_SCRIPT)
-            page = await context.new_page()
-            _register_itdog_finish_listener(page, test_finished_event)
+        for attempt_index in range(1, ITDOG_MAX_ATTEMPTS + 1):
+            test_finished_event = asyncio.Event()
+            context = None
+            page = None
+            user_data_dir, should_cleanup_dir = _prepare_itdog_user_data_dir(base_user_data_dir, attempt_index)
 
-            logger.info("打开 IT-Dog 页面...")
             try:
-                await page.goto(ITDOG_URL, timeout=60000, wait_until="domcontentloaded")
+                _cleanup_chromium_singleton_files(user_data_dir)
+                context = await _launch_persistent_context(playwright, user_data_dir)
+                await context.add_init_script(ANTI_BOT_INIT_SCRIPT)
+                page = await _open_itdog_page(context, test_finished_event)
+                final_results = await _run_itdog_workflow(page, test_finished_event, target_host, custom_dns)
+                if final_results:
+                    return final_results
+                raise RuntimeError("未能提取 IT-Dog 结果")
             except Exception as exc:
-                logger.warning("首次加载 IT-Dog 异常，尝试刷新: %s", exc)
-                await page.reload()
+                if attempt_index < ITDOG_MAX_ATTEMPTS:
+                    logger.warning(
+                        "IT-Dog 测试执行失败，将在 %s 秒后重试: host=%s attempt=%s/%s error=%s",
+                        ITDOG_RETRY_DELAY_SECONDS,
+                        target_host,
+                        attempt_index,
+                        ITDOG_MAX_ATTEMPTS,
+                        exc,
+                    )
+                else:
+                    logger.error(
+                        "IT-Dog 测试执行失败: host=%s attempt=%s/%s error=%s",
+                        target_host,
+                        attempt_index,
+                        ITDOG_MAX_ATTEMPTS,
+                        exc,
+                    )
+                await _save_debug_screenshot(page, "linux_error.png", "IT-Dog")
+            finally:
+                if context is not None:
+                    await context.close()
+                _cleanup_temporary_user_data_dir(user_data_dir, should_cleanup_dir)
 
-            logger.info("填写 IT-Dog 目标域名: %s", target_host)
-            await page.wait_for_timeout(1500)
-            await page.get_by_placeholder("例：example.com").fill(target_host)
+            if attempt_index < ITDOG_MAX_ATTEMPTS:
+                await asyncio.sleep(ITDOG_RETRY_DELAY_SECONDS)
 
-            logger.info("设置 IT-Dog 自定义 DNS: %s", custom_dns)
-            await page.get_by_role("button", name="高级选项").click()
-            await page.locator('input[name="dns_server_type"][value="custom"]').check(force=True)
-            await page.locator("#dns_server").fill(custom_dns)
-
-            logger.info("开始执行 IT-Dog 快速测试...")
-            await page.get_by_role("button", name="快速测试").click()
-
-            logger.info("等待 IT-Dog 结果，最大 60 秒...")
-            await asyncio.wait_for(test_finished_event.wait(), timeout=60)
-            final_results = await _extract_itdog_results(page)
-        except Exception as exc:
-            logger.error("IT-Dog 测试执行失败: host=%s error=%s", target_host, exc)
-            await _save_debug_screenshot(page, "linux_error.png", "IT-Dog")
-        finally:
-            if context is not None:
-                await context.close()
-
-    return final_results
+    return None
 
 
 async def run_cesu_test(target_urls: list[str], cookies: list[dict[str, object]] | None = None):
